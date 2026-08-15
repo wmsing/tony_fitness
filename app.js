@@ -6,18 +6,21 @@ import {
 const WRIST_L = 15;
 const WRIST_R = 16;
 
-/** Corners in mirrored screen space (what you see in selfie view). */
+/** Corners sized for close-up play (large hit targets near screen edges). */
 const CORNERS = [
-  { id: "right-top", label: "右上", x: 0.7, y: 0.05, w: 0.25, h: 0.28, emoji: "👾" },
-  { id: "left-top", label: "左上", x: 0.05, y: 0.05, w: 0.25, h: 0.28, emoji: "👹" },
-  { id: "right-bottom", label: "右下", x: 0.7, y: 0.62, w: 0.25, h: 0.28, emoji: "🤖" },
-  { id: "left-bottom", label: "左下", x: 0.05, y: 0.62, w: 0.25, h: 0.28, emoji: "👻" },
+  { id: "right-top", label: "右上", x: 0.55, y: 0.02, w: 0.42, h: 0.4, emoji: "👾" },
+  { id: "left-top", label: "左上", x: 0.03, y: 0.02, w: 0.42, h: 0.4, emoji: "👹" },
+  { id: "right-bottom", label: "右下", x: 0.55, y: 0.52, w: 0.42, h: 0.42, emoji: "🤖" },
+  { id: "left-bottom", label: "左下", x: 0.03, y: 0.52, w: 0.42, h: 0.42, emoji: "👻" },
 ];
 
-const HIT_SPEED = 0.55;
-const HIT_COOLDOWN_MS = 320;
+const HIT_SPEED = 0.48;
+const HIT_COOLDOWN_MS = 280;
 const SMOOTH = 0.45;
 const BASE_HITS = 5;
+const HIT_FLASH_MS = 220;
+const HIT_SHAKE_MS = 280;
+const HIT_POP_MS = 320;
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -45,6 +48,10 @@ let hp = BASE_HITS;
 let maxHp = BASE_HITS;
 let hitCooldownUntil = 0;
 let celebrateUntil = 0;
+let hitImpactUntil = 0;
+let hitShakeUntil = 0;
+/** @type {{x: number, y: number, born: number, text: string}[]} */
+let damagePops = [];
 
 const wrists = {
   left: { x: 0.5, y: 0.5, px: 0.5, py: 0.5, ready: false },
@@ -77,15 +84,21 @@ function spawnMonster(advance = false) {
   if (advance) {
     cornerIndex = (cornerIndex + 1) % CORNERS.length;
     maxHp = BASE_HITS + Math.floor(score / 3);
+    hitImpactUntil = 0;
+    hitShakeUntil = 0;
+    damagePops = [];
   }
   hp = maxHp;
   updateHud();
 }
 
 function flashHit() {
-  flashEl.classList.add("on");
-  setTimeout(() => flashEl.classList.remove("on"), 120);
-  if (navigator.vibrate) navigator.vibrate(40);
+  flashEl.classList.remove("on", "hard");
+  // Force reflow so repeated hits re-trigger the CSS animation.
+  void flashEl.offsetWidth;
+  flashEl.classList.add("on", "hard");
+  setTimeout(() => flashEl.classList.remove("on", "hard"), HIT_FLASH_MS);
+  if (navigator.vibrate) navigator.vibrate([30, 40, 50]);
 }
 
 function applyHit() {
@@ -93,8 +106,18 @@ function applyHit() {
   if (now < hitCooldownUntil) return;
   hitCooldownUntil = now + HIT_COOLDOWN_MS;
 
+  const corner = currentCorner();
   hp -= 1;
   combo += 1;
+  hitImpactUntil = now + HIT_POP_MS;
+  hitShakeUntil = now + HIT_SHAKE_MS;
+  damagePops.push({
+    x: corner.x + corner.w * 0.5,
+    y: corner.y + corner.h * 0.35,
+    born: now,
+    text: "-1",
+  });
+  if (damagePops.length > 8) damagePops.shift();
   flashHit();
 
   if (hp <= 0) {
@@ -106,6 +129,64 @@ function applyHit() {
   } else {
     updateHud();
     setStatus(`击中！连击 ${combo}`);
+  }
+}
+
+function drawMonsterHpBar(rx, ry, rw, rh) {
+  const barW = Math.min(rw * 0.72, canvas.width * 0.28);
+  const barH = Math.max(14, rh * 0.07);
+  const bx = rx + (rw - barW) / 2;
+  const by = Math.max(8, ry + rh * 0.08);
+  const ratio = Math.max(0, hp / maxHp);
+  const pad = Math.max(2, barH * 0.18);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.beginPath();
+  ctx.roundRect(bx - 3, by - 3, barW + 6, barH + 6, 8);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.beginPath();
+  ctx.roundRect(bx, by, barW, barH, 6);
+  ctx.fill();
+
+  const fillW = Math.max(0, (barW - pad * 2) * ratio);
+  if (fillW > 0) {
+    const grad = ctx.createLinearGradient(bx, by, bx + barW, by);
+    grad.addColorStop(0, ratio > 0.35 ? "#ff5a5f" : "#ff2d55");
+    grad.addColorStop(1, ratio > 0.35 ? "#ffb703" : "#ff6b35");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(bx + pad, by + pad, fillW, barH - pad * 2, 4);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${Math.max(12, Math.floor(barH * 0.85))}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`${hp}/${maxHp}`, bx + barW / 2, by + barH / 2 + 0.5);
+}
+
+function drawDamagePops(now, cw, ch) {
+  damagePops = damagePops.filter((p) => now - p.born < 700);
+  for (const p of damagePops) {
+    const t = (now - p.born) / 700;
+    const rise = t * ch * 0.08;
+    const alpha = 1 - t;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#ffe566";
+    ctx.strokeStyle = "#c1121f";
+    ctx.lineWidth = 4;
+    ctx.font = `bold ${Math.floor(cw * 0.055 * (1.15 - t * 0.25))}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const x = p.x * cw;
+    const y = p.y * ch - rise;
+    ctx.strokeText(p.text, x, y);
+    ctx.fillText(p.text, x, y);
+    ctx.restore();
   }
 }
 
@@ -164,26 +245,58 @@ function drawScene(mirroredLandmarks) {
   ctx.drawImage(video, ox, oy, dw, dh);
   ctx.restore();
 
+  const now = performance.now();
   const corner = currentCorner();
-  const rx = corner.x * cw;
-  const ry = corner.y * ch;
+  let rx = corner.x * cw;
+  let ry = corner.y * ch;
   const rw = corner.w * cw;
   const rh = corner.h * ch;
-  const pulsing = 0.85 + 0.15 * Math.sin(performance.now() / 180);
+  const pulsing = 0.9 + 0.1 * Math.sin(now / 160);
+  const hitting = now < hitImpactUntil;
+  const shaking = now < hitShakeUntil;
+
+  if (shaking) {
+    const t = 1 - (hitShakeUntil - now) / HIT_SHAKE_MS;
+    const amp = (1 - t) * Math.max(10, cw * 0.018);
+    rx += Math.sin(now / 18) * amp;
+    ry += Math.cos(now / 15) * amp * 0.7;
+  }
 
   ctx.save();
-  ctx.globalAlpha = 0.32;
-  ctx.fillStyle = "#ff5a5f";
-  ctx.fillRect(rx, ry, rw, rh);
+  ctx.globalAlpha = hitting ? 0.55 : 0.28;
+  ctx.fillStyle = hitting ? "#ff2d55" : "#ff5a5f";
+  ctx.beginPath();
+  ctx.roundRect(rx, ry, rw, rh, Math.min(28, rw * 0.08));
+  ctx.fill();
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = "#ffb703";
-  ctx.lineWidth = Math.max(3, cw * 0.004);
-  ctx.strokeRect(rx, ry, rw, rh);
-  ctx.font = `${Math.floor(Math.min(rw, rh) * 0.45 * pulsing)}px sans-serif`;
+  ctx.strokeStyle = hitting ? "#fff" : "#ffb703";
+  ctx.lineWidth = Math.max(4, cw * 0.006) * (hitting ? 1.35 : 1);
+  ctx.stroke();
+
+  drawMonsterHpBar(rx, ry, rw, rh);
+
+  const cx = rx + rw / 2;
+  const cy = ry + rh * 0.58;
+  const hitScale = hitting
+    ? 1.18 + 0.12 * Math.sin(((hitImpactUntil - now) / HIT_POP_MS) * Math.PI)
+    : 1;
+  const emojiSize = Math.floor(Math.min(rw, rh) * 0.62 * pulsing * hitScale);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (hitting) ctx.rotate(Math.sin(now / 20) * 0.12);
+  ctx.font = `${emojiSize}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(corner.emoji, rx + rw / 2, ry + rh / 2);
+  if (hitting) {
+    ctx.shadowColor = "#ff5a5f";
+    ctx.shadowBlur = 28;
+  }
+  ctx.fillText(corner.emoji, 0, 0);
   ctx.restore();
+  ctx.restore();
+
+  drawDamagePops(now, cw, ch);
 
   if (!mirroredLandmarks) return;
   for (const [idx, color] of [
@@ -402,7 +515,7 @@ async function toggle() {
     running = true;
     startBtn.textContent = "暂停";
     startBtn.classList.add("playing");
-    setStatus("站远一点，让上半身入镜，向角落挥拳！");
+    setStatus("靠镜头也可以，向大角落挥拳砸怪！");
     loop();
   } catch (err) {
     console.error(err);
