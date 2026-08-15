@@ -90,6 +90,149 @@ function loadEnemyImage(key, src) {
   enemyImages.set(key, image);
 }
 
+/** Load icon and punch out near-black background to alpha. */
+function loadWeaponIcon(key, src) {
+  if (!src || enemyImages.has(key)) return;
+  const image = new Image();
+  image.decoding = "async";
+  image.onload = () => {
+    try {
+      const c = document.createElement("canvas");
+      c.width = image.naturalWidth || 32;
+      c.height = image.naturalHeight || 32;
+      const cctx = c.getContext("2d", { willReadFrequently: true });
+      if (!cctx) {
+        enemyImages.set(key, image);
+        return;
+      }
+      cctx.drawImage(image, 0, 0);
+      const data = cctx.getImageData(0, 0, c.width, c.height);
+      const px = data.data;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i] < 10 && px[i + 1] < 10 && px[i + 2] < 10) px[i + 3] = 0;
+      }
+      cctx.putImageData(data, 0, 0);
+      const cleaned = new Image();
+      cleaned.src = c.toDataURL("image/png");
+      enemyImages.set(key, cleaned);
+    } catch {
+      enemyImages.set(key, image);
+    }
+  };
+  image.onerror = () => enemyImages.set(key, image);
+  image.src = src;
+}
+
+const USER_WEAPON_DIR = "assets/user_weapon/";
+const WEAPON_STORAGE_KEY = "tony_fitness_weapons";
+/** @typedef {{ id: string, file: string, tip: 'up' | 'diag' }} UserWeaponDef */
+/** tip: upright sprites point tip-up; Iicon sheets are diagonal tip-NE. */
+const USER_WEAPONS = [
+  { id: "13", file: "13.png", tip: "up" },
+  { id: "16", file: "16.png", tip: "up" },
+  { id: "17", file: "17.png", tip: "up" },
+  { id: "18", file: "18.png", tip: "up" },
+  { id: "Iicon_32_04", file: "Iicon_32_04.png", tip: "diag" },
+  { id: "Iicon_32_06", file: "Iicon_32_06.png", tip: "diag" },
+  { id: "Iicon_32_08", file: "Iicon_32_08.png", tip: "diag" },
+  { id: "Iicon_32_09", file: "Iicon_32_09.png", tip: "diag" },
+  { id: "Iicon_32_15", file: "Iicon_32_15.png", tip: "diag" },
+  { id: "Iicon_32_19", file: "Iicon_32_19.png", tip: "diag" },
+  { id: "Iicon_32_20", file: "Iicon_32_20.png", tip: "diag" },
+  { id: "Iicon_32_25", file: "Iicon_32_25.png", tip: "diag" },
+  { id: "Iicon_32_27", file: "Iicon_32_27.png", tip: "diag" },
+  { id: "Iicon_32_28", file: "Iicon_32_28.png", tip: "diag" },
+  { id: "Iicon_32_35", file: "Iicon_32_35.png", tip: "diag" },
+  { id: "Iicon_32_37", file: "Iicon_32_37.png", tip: "diag" },
+  { id: "Iicon_32_39", file: "Iicon_32_39.png", tip: "diag" },
+];
+
+function weaponImageKey(id) {
+  return `user-weapon-${id}`;
+}
+
+function findUserWeapon(id) {
+  return USER_WEAPONS.find((w) => w.id === id) || USER_WEAPONS[0];
+}
+
+function loadSavedWeapons() {
+  try {
+    const raw = localStorage.getItem(WEAPON_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const left = findUserWeapon(parsed.left).id;
+      const right = findUserWeapon(parsed.right).id;
+      return { left, right };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { left: "Iicon_32_09", right: "13" };
+}
+
+let weaponLeftId = loadSavedWeapons().left;
+let weaponRightId = loadSavedWeapons().right;
+
+function persistWeapons() {
+  try {
+    localStorage.setItem(
+      WEAPON_STORAGE_KEY,
+      JSON.stringify({ left: weaponLeftId, right: weaponRightId })
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+function setWeapon(side, id) {
+  if (!USER_WEAPONS.some((w) => w.id === id)) return;
+  if (side === "left") weaponLeftId = id;
+  else weaponRightId = id;
+  persistWeapons();
+  syncWeaponUI();
+  setStatus(
+    `${side === "left" ? "左手" : "右手"}武器已更换`
+  );
+}
+
+function syncWeaponUI() {
+  document.querySelectorAll("#weapon-left-grid .weapon-pick").forEach((btn) => {
+    btn.classList.toggle("on", btn.getAttribute("data-weapon") === weaponLeftId);
+  });
+  document.querySelectorAll("#weapon-right-grid .weapon-pick").forEach((btn) => {
+    btn.classList.toggle("on", btn.getAttribute("data-weapon") === weaponRightId);
+  });
+}
+
+function buildWeaponGrids() {
+  const leftGrid = document.getElementById("weapon-left-grid");
+  const rightGrid = document.getElementById("weapon-right-grid");
+  if (!leftGrid || !rightGrid) return;
+
+  const fill = (grid, side) => {
+    grid.innerHTML = "";
+    for (const w of USER_WEAPONS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "weapon-pick";
+      btn.setAttribute("data-weapon", w.id);
+      btn.title = w.id;
+      btn.setAttribute("aria-label", w.id);
+      const img = document.createElement("img");
+      img.src = `${USER_WEAPON_DIR}${w.file}`;
+      img.alt = w.id;
+      img.decoding = "async";
+      btn.appendChild(img);
+      btn.addEventListener("click", () => setWeapon(side, w.id));
+      grid.appendChild(btn);
+    }
+  };
+
+  fill(leftGrid, "left");
+  fill(rightGrid, "right");
+  syncWeaponUI();
+}
+
 function preloadEnemyImages() {
   for (const corner of CORNERS) {
     loadEnemyImage(corner.id, corner.img);
@@ -131,6 +274,9 @@ function preloadEnemyImages() {
     "village-chest",
     "assets/enemy/tiny-swords/Terrain/Resources/Gold/Gold Stones/Gold Stone 3_Highlight.png"
   );
+  for (const w of USER_WEAPONS) {
+    loadWeaponIcon(weaponImageKey(w.id), `${USER_WEAPON_DIR}${w.file}`);
+  }
 }
 
 function drawEnemySprite(corner, now, artSize, useAttack, hitImpactUntil = 0) {
@@ -188,6 +334,7 @@ const HEAD_SMOOTH = 0.4;
 const HIT_FLASH_MS = 220;
 const HIT_SHAKE_MS = 280;
 const HIT_POP_MS = 320;
+const SLASH_FX_MS = 320;
 
 /** Tiny Swords terrain used when camera preview is hidden. */
 const BG_GRASS_TILE = "assets/enemy/tiny-swords/bg-grass-tile.png";
@@ -503,7 +650,7 @@ let celebrateUntil = 0;
 let enemies = [];
 /** @type {{x: number, y: number, born: number, text: string}[]} */
 let damagePops = [];
-/** @type {{x: number, y: number, born: number, fxKey: string, scale: number}[]} */
+/** @type {{x: number, y: number, born: number, fxKey?: string, scale: number, kind?: string, angle?: number, dir?: number}[]} */
 let hitFx = [];
 
 /** @type {{key: string, src: string, x: number, y: number, h: number, hp: number, maxHp: number}[]} */
@@ -746,6 +893,7 @@ function showMenu() {
   if (resultOverlay) resultOverlay.hidden = true;
   hideSettings();
   appEl?.classList.add("menu-open");
+  appEl?.classList.remove("mode-village", "mode-smash");
   setStatus("选择模式后开始运动");
   resizeCanvas();
   drawMenuPreview();
@@ -757,7 +905,8 @@ function showSettings() {
   appEl?.classList.add("settings-open");
   if (settingsPanel) settingsPanel.hidden = false;
   syncDifficultyUI();
-  setStatus("调节难度后返回菜单");
+  syncWeaponUI();
+  setStatus("调节难度与武器后返回菜单");
 }
 
 function hideSettings() {
@@ -790,6 +939,8 @@ function enterMode(mode) {
   villageLost = false;
   if (resultOverlay) resultOverlay.hidden = true;
   appEl?.classList.remove("menu-open");
+  appEl?.classList.toggle("mode-village", mode === "village");
+  appEl?.classList.toggle("mode-smash", mode === "smash");
   score = 0;
   combo = 0;
   resetComboTitleState();
@@ -1217,10 +1368,11 @@ function applyRoleHit(source, pad) {
     x: box.x + box.w * 0.5,
     y: box.y + box.h * 0.35,
     born: now,
-    text: source === "nod" ? "点头!" : source === "slip" ? "躲闪!" : "-1",
+    text: source === "nod" ? "点头斩!" : source === "slip" ? "闪斩!" : "斩!",
   });
   if (damagePops.length > 10) damagePops.shift();
-  flashHit();
+  spawnSlashFx(box.x + box.w * 0.5, box.y + box.h * 0.5);
+  flashSlash();
 
   if (pad.hp <= 0) {
     spawnAlliesFromPad(pad);
@@ -1452,12 +1604,11 @@ function drawCastleLevelLabel(bx, by, bw, building) {
   if (building.hp != null && building.hp <= 0) return;
 
   const cx = bx + bw / 2;
-  const mainSize = Math.max(42, Math.floor(bw * 0.48));
-  const subSize = Math.max(16, Math.floor(mainSize * 0.32));
+  const mainSize = Math.max(36, Math.floor(bw * 0.4));
+  const subSize = Math.max(12, Math.floor(mainSize * 0.34));
   const xpNow = villageXpIntoLevel();
-  const nextChestAt =
-    lastChestMilestone + CHEST_LEVEL_STEP;
-  const yMain = by - Math.max(28, canvas.height * 0.028) - mainSize * 0.15;
+  const nextChestAt = lastChestMilestone + CHEST_LEVEL_STEP;
+  const yMain = by - Math.max(22, canvas.height * 0.022);
 
   ctx.save();
   ctx.textAlign = "center";
@@ -1467,23 +1618,16 @@ function drawCastleLevelLabel(bx, by, bw, building) {
   ctx.strokeStyle = "rgba(8, 16, 24, 0.85)";
   ctx.fillStyle = "#ffe566";
   ctx.font = `900 ${mainSize}px system-ui, sans-serif`;
-  const label = String(villageLevel);
+  const label = `等级 ${villageLevel}`;
   ctx.strokeText(label, cx, yMain);
   ctx.fillText(label, cx, yMain);
 
-  ctx.lineWidth = Math.max(3, subSize * 0.12);
-  ctx.fillStyle = "#fff";
-  ctx.font = `bold ${subSize}px system-ui, sans-serif`;
-  ctx.strokeText("等级", cx, yMain - mainSize * 0.55);
-  ctx.fillText("等级", cx, yMain - mainSize * 0.55);
-
+  ctx.lineWidth = Math.max(2, subSize * 0.1);
   ctx.fillStyle = "rgba(255,255,255,0.92)";
-  ctx.font = `bold ${Math.max(12, Math.floor(subSize * 0.85))}px system-ui, sans-serif`;
-  ctx.fillText(
-    `${xpNow}/${VILLAGE_XP_PER_LEVEL} · 宝箱 ${nextChestAt}级`,
-    cx,
-    yMain + mainSize * 0.55
-  );
+  ctx.font = `bold ${subSize}px system-ui, sans-serif`;
+  const sub = `${xpNow}/${VILLAGE_XP_PER_LEVEL} · 宝箱 ${nextChestAt}级`;
+  ctx.strokeText(sub, cx, yMain + mainSize * 0.62);
+  ctx.fillText(sub, cx, yMain + mainSize * 0.62);
   ctx.restore();
 }
 
@@ -1719,13 +1863,39 @@ function playPunchSound() {
 }
 
 function flashHit() {
-  flashEl.classList.remove("on", "hard");
+  flashEl.classList.remove("on", "hard", "slash");
   // Force reflow so repeated hits re-trigger the CSS animation.
   void flashEl.offsetWidth;
   flashEl.classList.add("on", "hard");
-  setTimeout(() => flashEl.classList.remove("on", "hard"), HIT_FLASH_MS);
+  setTimeout(() => flashEl.classList.remove("on", "hard", "slash"), HIT_FLASH_MS);
   if (navigator.vibrate) navigator.vibrate([30, 40, 50]);
   playPunchSound();
+}
+
+function flashSlash() {
+  flashEl.classList.remove("on", "hard", "slash");
+  void flashEl.offsetWidth;
+  flashEl.classList.add("on", "hard", "slash");
+  setTimeout(() => flashEl.classList.remove("on", "hard", "slash"), HIT_FLASH_MS);
+  if (navigator.vibrate) navigator.vibrate([18, 28, 36]);
+  playPunchSound();
+}
+
+function spawnSlashFx(nx, ny) {
+  const now = performance.now();
+  const baseAngle = -0.55 + Math.random() * 0.3;
+  for (let i = 0; i < 2; i++) {
+    hitFx.push({
+      kind: "slash",
+      x: nx + (Math.random() - 0.5) * 0.04,
+      y: ny + (Math.random() - 0.5) * 0.03,
+      born: now + i * 30,
+      angle: baseAngle + i * 0.35 + (Math.random() - 0.5) * 0.2,
+      scale: 0.95 + Math.random() * 0.35,
+      dir: i === 0 ? 1 : -1,
+    });
+  }
+  if (hitFx.length > 20) hitFx.splice(0, hitFx.length - 20);
 }
 
 function applyHit(source = "punch", enemy = null) {
@@ -1850,6 +2020,7 @@ function drawDamagePops(now, cw, ch) {
 function drawHitFx(now, cw, ch) {
   const defs = Object.fromEntries(HIT_FX.map((f) => [f.key, f]));
   hitFx = hitFx.filter((p) => {
+    if (p.kind === "slash") return now - p.born < SLASH_FX_MS;
     const def = defs[p.fxKey];
     if (!def) return false;
     return now - p.born < def.cols * def.frameMs;
@@ -1857,6 +2028,10 @@ function drawHitFx(now, cw, ch) {
 
   ctx.imageSmoothingEnabled = false;
   for (const p of hitFx) {
+    if (p.kind === "slash") {
+      drawSlashArc(p, now, cw, ch);
+      continue;
+    }
     const def = defs[p.fxKey];
     const img = enemyImages.get(def.key);
     if (!(img?.complete && img.naturalWidth > 0)) continue;
@@ -1872,6 +2047,38 @@ function drawHitFx(now, cw, ch) {
     ctx.drawImage(img, frame * fw, 0, fw, fh, x, y, size, size);
   }
   ctx.imageSmoothingEnabled = true;
+}
+
+function drawSlashArc(p, now, cw, ch) {
+  const t = Math.max(0, Math.min(1, (now - p.born) / SLASH_FX_MS));
+  if (t <= 0 || t >= 1) return;
+  const fade = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8;
+  const x = p.x * cw;
+  const y = p.y * ch;
+  const r = Math.min(cw, ch) * 0.14 * p.scale;
+  const sweep = 1.15;
+  const start = (p.angle || 0) + (p.dir || 1) * t * sweep;
+  const end = start + (p.dir || 1) * (0.55 + (1 - t) * 0.35);
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.globalAlpha = 0.35 + fade * 0.65;
+  ctx.strokeStyle = "#e8f7ff";
+  ctx.lineWidth = Math.max(5, r * 0.22) * (1.15 - t * 0.4);
+  ctx.lineCap = "round";
+  ctx.shadowColor = "#7ec8ff";
+  ctx.shadowBlur = 18;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, start, end, (p.dir || 1) < 0);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ffe566";
+  ctx.lineWidth = Math.max(2, r * 0.08);
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.92, start + 0.08, end - 0.05, (p.dir || 1) < 0);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function pointInCorner(x, y, corner) {
@@ -2300,9 +2507,66 @@ function drawCartoonHands(now, cw, ch) {
     const x = w.x * cw;
     const y = w.y * ch;
     const moving = Math.hypot(w.x - w.px, w.y - w.py);
-    const punchBoost = impact ? 1.2 : 1 + Math.min(0.25, moving * 8);
-    drawCartoonGlove(x, y, w.angle, side, Math.max(72, cw * 0.1) * punchBoost, impact);
+    const boost = impact ? 1.2 : 1 + Math.min(0.25, moving * 8);
+    const size = Math.max(72, cw * 0.1) * boost;
+    if (gameMode === "village") {
+      drawCartoonSword(x, y, w.angle, side, size, impact);
+    } else {
+      drawCartoonGlove(x, y, w.angle, side, size, impact);
+    }
   }
+}
+
+/** Pixel sword from settings pick; +X is slash direction (elbow → wrist). */
+function drawCartoonSword(x, y, angle, side, size, impact) {
+  const def = findUserWeapon(side === "left" ? weaponLeftId : weaponRightId);
+  ctx.save();
+  ctx.translate(x, y);
+  const tipAlign = def.tip === "diag" ? Math.PI / 4 : Math.PI / 2;
+  ctx.rotate(angle + tipAlign + (side === "left" ? -0.2 : 0.15));
+
+  const img = enemyImages.get(weaponImageKey(def.id));
+  const edge = side === "left" ? "#7ec8ff" : "#ffe566";
+
+  if (impact) {
+    ctx.shadowColor = edge;
+    ctx.shadowBlur = size * 0.55;
+  }
+
+  if (img?.complete && img.naturalWidth > 0) {
+    const aspect = img.naturalWidth / img.naturalHeight;
+    const s = size * (def.tip === "diag" ? 1.25 : 1.45);
+    const dw = aspect >= 1 ? s : s * aspect;
+    const dh = aspect >= 1 ? s / aspect : s;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    ctx.imageSmoothingEnabled = true;
+  } else {
+    ctx.fillStyle = side === "left" ? "#d9f2ff" : "#ffc48a";
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.12);
+    ctx.lineTo(size * 0.85, 0);
+    ctx.lineTo(0, size * 0.12);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.shadowBlur = 0;
+  if (impact) {
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = Math.max(3, size * 0.07);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(size * 0.2, 0, size * 0.5, -0.9, 0.55);
+    ctx.stroke();
+    ctx.fillStyle = "#ffe566";
+    ctx.font = `bold ${Math.floor(size * 0.42)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("斬", size * 0.45, -size * 0.4);
+  }
+
+  ctx.restore();
 }
 
 /** Cartoon boxing glove; +X is punch direction (elbow → wrist). */
@@ -3110,6 +3374,7 @@ updateBgButton();
 syncPlaylistInput();
 syncPlayModeButton();
 preloadEnemyImages();
+buildWeaponGrids();
 syncDifficultyUI();
 showMenu();
 // Warm up YouTube embed so「开始运动」更容易一次点播。

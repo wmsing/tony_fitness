@@ -24,7 +24,7 @@
           </button>
           <button id="mode-settings" type="button" class="mode-card mode-card-secondary">
             <span class="mode-card-title">设置</span>
-            <span class="mode-card-desc">调节游戏难度</span>
+            <span class="mode-card-desc">难度与左右武器</span>
           </button>
         </div>
       </div>
@@ -41,6 +41,12 @@
           <button type="button" class="diff-btn" data-diff="insane">地狱</button>
         </div>
         <p id="difficulty-desc" class="settings-desc">敌兵密度与砸怪血量适中，适合日常锻炼。</p>
+
+        <p class="settings-label" id="weapon-left-label">左手武器</p>
+        <div id="weapon-left-grid" class="weapon-grid" role="group" aria-labelledby="weapon-left-label"></div>
+        <p class="settings-label" id="weapon-right-label">右手武器</p>
+        <div id="weapon-right-grid" class="weapon-grid" role="group" aria-labelledby="weapon-right-label"></div>
+
         <button id="settings-back" type="button" class="settings-back">返回菜单</button>
       </div>
     </section>

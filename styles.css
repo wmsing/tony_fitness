@@ -42,6 +42,11 @@ body {
   z-index: 2;
 }
 
+/* Village: castle/level already on map — drop 击退/召唤 HUD, keep menu button only. */
+#app.mode-village .hud {
+  display: none;
+}
+
 .hud-block {
   display: flex;
   flex-direction: column;
@@ -143,12 +148,25 @@ body {
   transition: opacity 0.18s ease-out;
 }
 
+#flash.slash {
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(126, 200, 255, 0.42) 42%,
+    rgba(76, 201, 240, 0.18) 100%
+  );
+}
+
 #flash.on {
   opacity: 1;
 }
 
 #flash.hard {
   animation: hit-punch 0.22s ease-out;
+}
+
+#flash.hard.slash {
+  animation: hit-slash 0.24s ease-out;
 }
 
 @keyframes hit-punch {
@@ -159,6 +177,17 @@ body {
   100% {
     opacity: 0;
     transform: scale(1);
+  }
+}
+
+@keyframes hit-slash {
+  0% {
+    opacity: 1;
+    transform: scale(1.06) rotate(-1.5deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1) rotate(0deg);
   }
 }
 
@@ -409,7 +438,9 @@ body {
 }
 
 .settings-inner {
-  width: min(420px, 100%);
+  width: min(480px, 100%);
+  max-height: min(88vh, 720px);
+  overflow-y: auto;
   padding: 22px 18px;
   border-radius: 16px;
   text-align: center;
@@ -461,6 +492,39 @@ body {
   font-size: 0.88rem;
   line-height: 1.45;
   min-height: 2.6em;
+}
+
+.weapon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.weapon-pick {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  image-rendering: pixelated;
+}
+
+.weapon-pick img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.weapon-pick.on {
+  border-color: #ffe566;
+  box-shadow: 0 0 0 2px rgba(255, 229, 102, 0.35);
+  background: rgba(255, 229, 102, 0.12);
 }
 
 .settings-back {
