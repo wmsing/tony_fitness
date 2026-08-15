@@ -17,10 +17,14 @@ const CORNERS = [
 const HIT_SPEED = 0.48;
 const HIT_COOLDOWN_MS = 280;
 const SMOOTH = 0.45;
-const BASE_HITS = 5;
+const BASE_HITS = 10;
 const HIT_FLASH_MS = 220;
 const HIT_SHAKE_MS = 280;
 const HIT_POP_MS = 320;
+
+/** Workout BGM — YouTube playlist (official embed). */
+const YT_VIDEO_ID = "MbD7TAlBFDc";
+const YT_PLAYLIST_ID = "PLGE-oAi0TRbtlX5kvtO415sergiyGEyUp";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -40,6 +44,9 @@ let running = false;
 let rafId = 0;
 let lastVideoTime = -1;
 let lastTs = 0;
+let ytPlayer = null;
+/** @type {Promise<void> | null} */
+let ytReadyPromise = null;
 
 let score = 0;
 let combo = 0;
@@ -219,7 +226,10 @@ function checkWristHit(side, dt) {
   const w = wrists[side];
   if (!w.ready || dt <= 0) return;
   const corner = currentCorner();
-  if (!pointInCorner(w.x, w.y, corner)) return;
+  const wasOutside = !pointInCorner(w.px, w.py, corner);
+  const nowInside = pointInCorner(w.x, w.y, corner);
+  // Must punch in from outside — holding / waving inside does not count.
+  if (!wasOutside || !nowInside) return;
 
   const speed = Math.hypot(w.x - w.px, w.y - w.py) / dt;
   if (speed >= HIT_SPEED) applyHit();
@@ -439,12 +449,123 @@ async function toggleCamera() {
   }
 }
 
+function loadYouTubeApi() {
+  return new Promise((resolve, reject) => {
+    if (window.YT?.Player) {
+      resolve(window.YT);
+      return;
+    }
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      try {
+        prev?.();
+      } catch {
+        /* ignore prior handler errors */
+      }
+      resolve(window.YT);
+    };
+    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      tag.onerror = () => reject(new Error("无法加载 YouTube API"));
+      document.head.appendChild(tag);
+    }
+  });
+}
+
+async function ensureYtPlayer() {
+  if (ytPlayer && ytReadyPromise) {
+    await ytReadyPromise;
+    return ytPlayer;
+  }
+  const YT = await loadYouTubeApi();
+  ytReadyPromise = new Promise((resolve, reject) => {
+    let settled = false;
+    ytPlayer = new YT.Player("yt-player", {
+      width: "148",
+      height: "83",
+      videoId: YT_VIDEO_ID,
+      playerVars: {
+        listType: "playlist",
+        list: YT_PLAYLIST_ID,
+        autoplay: 0,
+        controls: 1,
+        modestbranding: 1,
+        rel: 0,
+        playsinline: 1,
+        origin: window.location.origin,
+      },
+      events: {
+        onReady: (event) => {
+          try {
+            event.target.setShuffle(true);
+            event.target.setLoop(true);
+          } catch {
+            /* shuffle may fail before playlist is fully loaded */
+          }
+          if (settled) return;
+          settled = true;
+          resolve();
+        },
+        onError: (e) => {
+          console.warn("YouTube player error", e?.data);
+          if (settled) return;
+          settled = true;
+          reject(new Error(`YouTube 播放错误：${e?.data ?? "unknown"}`));
+        },
+      },
+    });
+  });
+  await ytReadyPromise;
+  return ytPlayer;
+}
+
+async function playWorkoutMusic() {
+  try {
+    const player = await ensureYtPlayer();
+    try {
+      player.setShuffle(true);
+      player.setLoop(true);
+    } catch {
+      /* ignore */
+    }
+    const list = player.getPlaylist?.() ?? null;
+    if (list && list.length > 0) {
+      const index = Math.floor(Math.random() * list.length);
+      player.playVideoAt(index);
+    } else {
+      // Playlist not loaded yet — start then jump to a shuffled next track.
+      player.playVideo();
+      setTimeout(() => {
+        try {
+          player.setShuffle(true);
+          player.nextVideo();
+        } catch {
+          /* ignore */
+        }
+      }, 400);
+    }
+  } catch (err) {
+    console.warn(err);
+    setStatus("游戏已开始；YouTube 音乐未能自动播放，可点底部播放器。");
+  }
+}
+
+function pauseWorkoutMusic() {
+  try {
+    ytPlayer?.pauseVideo?.();
+  } catch {
+    /* player may not be ready */
+  }
+}
+
 function stopLoop() {
   running = false;
   if (rafId) cancelAnimationFrame(rafId);
   rafId = 0;
   startBtn.textContent = "开始运动";
   startBtn.classList.remove("playing");
+  pauseWorkoutMusic();
 }
 
 function loop() {
@@ -497,6 +618,9 @@ async function toggle() {
     return;
   }
 
+  // Kick music in the click gesture before any long awaits.
+  const musicPromise = playWorkoutMusic();
+
   startBtn.disabled = true;
   try {
     if (!poseLandmarker) await createPose();
@@ -517,6 +641,7 @@ async function toggle() {
     startBtn.classList.add("playing");
     setStatus("靠镜头也可以，向大角落挥拳砸怪！");
     loop();
+    await musicPromise;
   } catch (err) {
     console.error(err);
     setStatus(`启动失败：${err.message || err}`);
@@ -534,3 +659,5 @@ window.addEventListener("resize", () => {
 });
 updateCameraButton();
 setStatus("可先「打开摄像头」，或直接点「开始运动」");
+// Warm up YouTube embed so「开始运动」更容易一次点播。
+void ensureYtPlayer().catch((err) => console.warn(err));

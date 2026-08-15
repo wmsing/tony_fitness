@@ -28,11 +28,11 @@ npx --yes serve .
 
 - 纯静态网页：`index.html` / `styles.css` / `app.js`
 - [MediaPipe Pose](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker)（CDN）跟踪双手腕
-- 命中条件：手腕进入怪物区域 **且** 移动速度够快 + 短冷却，减少误触
+- 命中条件：手腕**从怪物区域外快速打入区域内**（区域内停留或晃动手不算）+ 短冷却，减少误触
 
 ## 键位 / 操作
 
 无需键盘。用双手挥向提示的角落即可。
 
 - **打开 / 关闭摄像头**：单独开关镜头（关闭会停止游戏并释放摄像头）
-- **开始运动 / 暂停**：开始或暂停砸怪
+- **开始运动 / 暂停**：开始或暂停砸怪；开始时底部居中小播放器随机播放 [YouTube 播放列表](https://www.youtube.com/watch?v=MbD7TAlBFDc&list=PLGE-oAi0TRbtlX5kvtO415sergiyGEyUp)，暂停时停播
