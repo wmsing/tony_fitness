@@ -104,7 +104,7 @@ function preloadEnemyImages() {
   }
 }
 
-function drawEnemySprite(corner, now, artSize, useAttack) {
+function drawEnemySprite(corner, now, artSize, useAttack, hitImpactUntil = 0) {
   const key = useAttack && corner.attackImg ? `${corner.id}-attack` : corner.id;
   const enemyImg = enemyImages.get(key);
   const cols = useAttack
@@ -234,6 +234,8 @@ const HIT_FX = [
 const YT_VIDEO_ID = "MbD7TAlBFDc";
 const YT_PLAYLIST_ID_DEFAULT = "PLGE-oAi0TRbtlX5kvtO415sergiyGEyUp";
 const YT_PLAYLIST_STORAGE_KEY = "tony_fitness_yt_playlist";
+const YT_MODE_STORAGE_KEY = "tony_fitness_yt_mode";
+/** @typedef {'shuffle' | 'loop'} YtPlayMode */
 
 function loadSavedPlaylistId() {
   try {
@@ -243,6 +245,17 @@ function loadSavedPlaylistId() {
     /* private mode / blocked storage */
   }
   return YT_PLAYLIST_ID_DEFAULT;
+}
+
+/** @returns {YtPlayMode} */
+function loadSavedPlayMode() {
+  try {
+    const saved = localStorage.getItem(YT_MODE_STORAGE_KEY);
+    if (saved === "loop" || saved === "shuffle") return saved;
+  } catch {
+    /* ignore */
+  }
+  return "shuffle";
 }
 
 /** Accept playlist URL or raw list id. */
@@ -275,6 +288,11 @@ const playlistToggle = document.getElementById("playlist-toggle");
 const playlistPop = document.getElementById("playlist-pop");
 const playlistCancel = document.getElementById("playlist-cancel");
 const playlistMenu = document.getElementById("playlist-menu");
+const ytSongEl = document.getElementById("yt-song");
+const ytArtistEl = document.getElementById("yt-artist");
+const ytPrevBtn = document.getElementById("yt-prev");
+const ytNextBtn = document.getElementById("yt-next");
+const ytModeBtn = document.getElementById("yt-mode");
 const statusEl = document.getElementById("status");
 const scoreEl = document.getElementById("score");
 const comboEl = document.getElementById("combo");
@@ -292,18 +310,25 @@ let ytPlayer = null;
 let ytReadyPromise = null;
 /** Active playlist id (persisted). */
 let ytPlaylistId = loadSavedPlaylistId();
+/** @type {YtPlayMode} */
+let ytPlayMode = loadSavedPlayMode();
+/** Playlist index to keep looping while in single-track mode. */
+let ytLoopIndex = null;
 /** When false, canvas uses black bg; camera still runs for pose. */
 let showCameraBg = false;
 
+const MIN_ACTIVE_ENEMIES = 1;
+const MAX_ACTIVE_ENEMIES = 2;
+
 let score = 0;
 let combo = 0;
-let cornerIndex = 0;
-let hp = BASE_HITS;
-let maxHp = BASE_HITS;
 let hitCooldownUntil = 0;
 let celebrateUntil = 0;
-let hitImpactUntil = 0;
-let hitShakeUntil = 0;
+/**
+ * Active monsters on screen (1–2).
+ * @type {{cornerIndex: number, hp: number, maxHp: number, hitImpactUntil: number, hitShakeUntil: number}[]}
+ */
+let enemies = [];
 /** @type {{x: number, y: number, born: number, text: string}[]} */
 let damagePops = [];
 /** @type {{x: number, y: number, born: number, fxKey: string, scale: number}[]} */
@@ -326,7 +351,70 @@ function setStatus(text) {
 }
 
 function currentCorner() {
-  return CORNERS[cornerIndex % CORNERS.length];
+  return CORNERS[(enemies[0]?.cornerIndex ?? 0) % CORNERS.length];
+}
+
+function cornerOf(enemy) {
+  return CORNERS[enemy.cornerIndex % CORNERS.length];
+}
+
+function anyEnemyImpact(now = performance.now()) {
+  return enemies.some((e) => now < e.hitImpactUntil);
+}
+
+function occupiedCornerSet() {
+  return new Set(enemies.map((e) => e.cornerIndex));
+}
+
+function freeCornerIndexes() {
+  const occupied = occupiedCornerSet();
+  const free = [];
+  for (let i = 0; i < CORNERS.length; i++) {
+    if (!occupied.has(i)) free.push(i);
+  }
+  return free;
+}
+
+function randomInt(min, maxInclusive) {
+  return min + Math.floor(Math.random() * (maxInclusive - min + 1));
+}
+
+/** Spawn one enemy in a random free corner (任一：左上/右上/左下/右下). */
+function spawnEnemy() {
+  if (enemies.length >= MAX_ACTIVE_ENEMIES) return null;
+  const free = freeCornerIndexes();
+  if (free.length === 0) return null;
+  const cornerIndex = free[Math.floor(Math.random() * free.length)];
+  const maxHp = BASE_HITS + Math.floor(score / 3);
+  const enemy = {
+    cornerIndex,
+    hp: maxHp,
+    maxHp,
+    hitImpactUntil: 0,
+    hitShakeUntil: 0,
+  };
+  enemies.push(enemy);
+  return enemy;
+}
+
+/**
+ * Keep 1–2 enemies. Rolls a random target count each refill;
+ * never removes living enemies, only adds until target (or max free).
+ */
+function refillEnemies() {
+  const want = randomInt(MIN_ACTIVE_ENEMIES, MAX_ACTIVE_ENEMIES);
+  while (enemies.length < want) {
+    if (!spawnEnemy()) break;
+  }
+  if (enemies.length < MIN_ACTIVE_ENEMIES) spawnEnemy();
+  updateHud();
+}
+
+function resetEnemies() {
+  enemies = [];
+  damagePops = [];
+  hitFx = [];
+  refillEnemies();
 }
 
 /** Keep enemies inside the visible band between HUD and footer. */
@@ -361,30 +449,37 @@ function cornerNormRect(corner) {
 }
 
 function updateHud() {
-  const corner = currentCorner();
   scoreEl.textContent = String(score);
   comboEl.textContent = String(combo);
-  hpFill.style.width = `${Math.max(0, (hp / maxHp) * 100)}%`;
-  hpText.textContent = `${hp} / ${maxHp}`;
+
+  const totalHp = enemies.reduce((s, e) => s + e.hp, 0);
+  const totalMax = enemies.reduce((s, e) => s + e.maxHp, 0) || 1;
+  hpFill.style.width = `${Math.max(0, (totalHp / totalMax) * 100)}%`;
+  hpText.textContent =
+    enemies.length > 1
+      ? `${enemies.length}只 · ${totalHp}/${totalMax}`
+      : `${totalHp} / ${totalMax}`;
+
+  const labels = enemies.map((e) => {
+    const c = cornerOf(e);
+    return `「${c.label}」${c.name || c.emoji}`;
+  });
 
   if (performance.now() < celebrateUntil) {
-    promptEl.textContent = `击杀！下一只去「${corner.label}」`;
+    promptEl.textContent =
+      labels.length > 0 ? `击杀！继续砸 ${labels.join(" + ")}` : "击杀！";
+  } else if (labels.length === 0) {
+    promptEl.textContent = "准备开始";
   } else {
-    promptEl.textContent = `砸「${corner.label}」· 挥拳 / 甩头 · ${corner.name || corner.emoji}`;
+    promptEl.textContent = `砸 ${labels.join(" + ")} · 挥拳 / 甩头`;
   }
 }
 
 function spawnMonster(advance = false) {
   if (advance) {
-    cornerIndex = (cornerIndex + 1) % CORNERS.length;
-    maxHp = BASE_HITS + Math.floor(score / 3);
-    hitImpactUntil = 0;
-    hitShakeUntil = 0;
-    damagePops = [];
-    hitFx = [];
+    // Kept for compatibility; kills now remove + refill via refillEnemies.
   }
-  hp = maxHp;
-  updateHud();
+  refillEnemies();
 }
 
 function playPunchSound() {
@@ -407,19 +502,21 @@ function flashHit() {
   playPunchSound();
 }
 
-function applyHit(source = "punch") {
+function applyHit(source = "punch", enemy = null) {
   const now = performance.now();
   if (now < hitCooldownUntil) return;
+  const target = enemy ?? enemies[0];
+  if (!target) return;
   hitCooldownUntil = now + HIT_COOLDOWN_MS;
 
-  const corner = currentCorner();
+  const corner = cornerOf(target);
   const box = cornerNormRect(corner);
-  hp -= 1;
+  target.hp -= 1;
   combo += 1;
   const attackFrames = corner.attackCols || corner.sheetCols || 4;
   const attackMs = Math.max(HIT_POP_MS, attackFrames * ENEMY_FRAME_MS);
-  hitImpactUntil = now + attackMs;
-  hitShakeUntil = now + HIT_SHAKE_MS;
+  target.hitImpactUntil = now + attackMs;
+  target.hitShakeUntil = now + HIT_SHAKE_MS;
   damagePops.push({
     x: box.x + box.w * 0.5,
     y: box.y + box.h * 0.35,
@@ -443,26 +540,33 @@ function applyHit(source = "punch") {
 
   flashHit();
 
-  if (hp <= 0) {
+  if (target.hp <= 0) {
     score += 1;
     combo = 0;
     celebrateUntil = now + 900;
-    spawnMonster(true);
+    enemies = enemies.filter((e) => e !== target);
+    refillEnemies();
     setStatus(`干得漂亮！已击杀 ${score} 只`);
   } else {
     updateHud();
     const how =
-      source === "nod" ? "点头" : source === "slip" ? "甩头躲闪" : source === "head" ? "头部撞击" : "挥拳";
-    setStatus(`${how}击中！连击 ${combo}`);
+      source === "nod"
+        ? "点头"
+        : source === "slip"
+          ? "甩头躲闪"
+          : source === "head"
+            ? "头部撞击"
+            : "挥拳";
+    setStatus(`${how}击中「${corner.label}」！连击 ${combo}`);
   }
 }
 
-function drawMonsterHpBar(rx, ry, rw, rh) {
+function drawMonsterHpBar(rx, ry, rw, rh, enemy) {
   const barW = Math.min(rw * 0.72, canvas.width * 0.28);
   const barH = Math.max(14, rh * 0.07);
   const bx = rx + (rw - barW) / 2;
   const by = Math.max(8, ry + rh * 0.08);
-  const ratio = Math.max(0, hp / maxHp);
+  const ratio = Math.max(0, enemy.hp / enemy.maxHp);
   const pad = Math.max(2, barH * 0.18);
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
@@ -490,7 +594,7 @@ function drawMonsterHpBar(rx, ry, rw, rh) {
   ctx.font = `bold ${Math.max(12, Math.floor(barH * 0.85))}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(`${hp}/${maxHp}`, bx + barW / 2, by + barH / 2 + 0.5);
+  ctx.fillText(`${enemy.hp}/${enemy.maxHp}`, bx + barW / 2, by + barH / 2 + 0.5);
 }
 
 function drawDamagePops(now, cw, ch) {
@@ -571,15 +675,20 @@ function smoothWrist(side, nx, ny, angle) {
 
 function checkWristHit(side, dt) {
   const w = wrists[side];
-  if (!w.ready || dt <= 0) return;
-  const corner = currentCorner();
-  const wasOutside = !pointInCorner(w.px, w.py, corner);
-  const nowInside = pointInCorner(w.x, w.y, corner);
-  // Must punch in from outside — holding / waving inside does not count.
-  if (!wasOutside || !nowInside) return;
+  if (!w.ready || dt <= 0 || enemies.length === 0) return;
 
-  const speed = Math.hypot(w.x - w.px, w.y - w.py) / dt;
-  if (speed >= HIT_SPEED) applyHit("punch");
+  for (const enemy of enemies) {
+    const corner = cornerOf(enemy);
+    const wasOutside = !pointInCorner(w.px, w.py, corner);
+    const nowInside = pointInCorner(w.x, w.y, corner);
+    if (!wasOutside || !nowInside) continue;
+
+    const speed = Math.hypot(w.x - w.px, w.y - w.py) / dt;
+    if (speed >= HIT_SPEED) {
+      applyHit("punch", enemy);
+      return;
+    }
+  }
 }
 
 function smoothHead(nx, ny) {
@@ -597,23 +706,36 @@ function smoothHead(nx, ny) {
   head.y = head.y * (1 - HEAD_SMOOTH) + ny * HEAD_SMOOTH;
 }
 
-/** Head slip (lateral) / nod (down) / jab into the monster corner. */
+/** Head slip (lateral) / nod (down) / jab into a monster corner. */
 function checkHeadHit(dt) {
-  if (!head.ready || dt <= 0) return;
-  const corner = currentCorner();
-  const wasOutside = !pointInCorner(head.px, head.py, corner);
-  const nowInside = pointInCorner(head.x, head.y, corner);
-  if (!wasOutside || !nowInside) return;
+  if (!head.ready || dt <= 0 || enemies.length === 0) return;
 
-  const dx = head.x - head.px;
-  const dy = head.y - head.py;
-  const speed = Math.hypot(dx, dy) / dt;
-  const isNod = dy > 0.01 && dy >= Math.abs(dx) * 0.65 && speed >= HEAD_HIT_SPEED * 0.9;
-  const isSlip = Math.abs(dx) > 0.01 && Math.abs(dx) >= Math.abs(dy) * 0.65 && speed >= HEAD_SLIP_SPEED;
-  const isJab = speed >= HEAD_HIT_SPEED;
-  if (isNod) applyHit("nod");
-  else if (isSlip) applyHit("slip");
-  else if (isJab) applyHit("head");
+  for (const enemy of enemies) {
+    const corner = cornerOf(enemy);
+    const wasOutside = !pointInCorner(head.px, head.py, corner);
+    const nowInside = pointInCorner(head.x, head.y, corner);
+    if (!wasOutside || !nowInside) continue;
+
+    const dx = head.x - head.px;
+    const dy = head.y - head.py;
+    const speed = Math.hypot(dx, dy) / dt;
+    const isNod = dy > 0.01 && dy >= Math.abs(dx) * 0.65 && speed >= HEAD_HIT_SPEED * 0.9;
+    const isSlip =
+      Math.abs(dx) > 0.01 && Math.abs(dx) >= Math.abs(dy) * 0.65 && speed >= HEAD_SLIP_SPEED;
+    const isJab = speed >= HEAD_HIT_SPEED;
+    if (isNod) {
+      applyHit("nod", enemy);
+      return;
+    }
+    if (isSlip) {
+      applyHit("slip", enemy);
+      return;
+    }
+    if (isJab) {
+      applyHit("head", enemy);
+      return;
+    }
+  }
 }
 
 /** Cover-draw mirrored video, then overlays in the same mirrored space. */
@@ -676,53 +798,9 @@ function drawScene(mirroredLandmarks) {
   }
 
   const now = performance.now();
-  const corner = currentCorner();
-  const box = cornerNormRect(corner);
-  let rx = box.x * cw;
-  let ry = box.y * ch;
-  const rw = box.w * cw;
-  const rh = box.h * ch;
-  const pulsing = 0.9 + 0.1 * Math.sin(now / 160);
-  const hitting = now < hitImpactUntil;
-  const shaking = now < hitShakeUntil;
-
-  if (shaking) {
-    const t = 1 - (hitShakeUntil - now) / HIT_SHAKE_MS;
-    const amp = (1 - t) * Math.max(10, cw * 0.018);
-    rx += Math.sin(now / 18) * amp;
-    ry += Math.cos(now / 15) * amp * 0.7;
+  for (const enemy of enemies) {
+    drawOneEnemy(enemy, now, cw, ch);
   }
-
-  ctx.save();
-  ctx.globalAlpha = hitting ? 0.5 : 0.28;
-  ctx.fillStyle = hitting ? "#2ecc71" : "#3ddc97";
-  ctx.beginPath();
-  ctx.roundRect(rx, ry, rw, rh, Math.min(28, rw * 0.08));
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = hitting ? "#fff" : "#1faa6a";
-  ctx.lineWidth = Math.max(4, cw * 0.006) * (hitting ? 1.35 : 1);
-  ctx.stroke();
-
-  drawMonsterHpBar(rx, ry, rw, rh);
-
-  const cx = rx + rw / 2;
-  const cy = ry + rh * 0.58;
-  const hitScale = hitting
-    ? 1.18 + 0.12 * Math.sin(((hitImpactUntil - now) / HIT_POP_MS) * Math.PI)
-    : 1;
-  const artSize = Math.floor(Math.min(rw, rh) * 1.7 * pulsing * hitScale);
-
-  ctx.save();
-  ctx.translate(cx, cy);
-  if (hitting) ctx.rotate(Math.sin(now / 20) * 0.12);
-  if (hitting) {
-    ctx.shadowColor = "#3ddc97";
-    ctx.shadowBlur = 28;
-  }
-  drawEnemySprite(corner, now, artSize, hitting);
-  ctx.restore();
-  ctx.restore();
 
   drawDamagePops(now, cw, ch);
   drawHitFx(now, cw, ch);
@@ -753,12 +831,62 @@ function drawScene(mirroredLandmarks) {
   drawHeadMarker(now, cw, ch);
 }
 
+function drawOneEnemy(enemy, now, cw, ch) {
+  const corner = cornerOf(enemy);
+  const box = cornerNormRect(corner);
+  let rx = box.x * cw;
+  let ry = box.y * ch;
+  const rw = box.w * cw;
+  const rh = box.h * ch;
+  const pulsing = 0.9 + 0.1 * Math.sin(now / 160 + enemy.cornerIndex);
+  const hitting = now < enemy.hitImpactUntil;
+  const shaking = now < enemy.hitShakeUntil;
+
+  if (shaking) {
+    const t = 1 - (enemy.hitShakeUntil - now) / HIT_SHAKE_MS;
+    const amp = (1 - t) * Math.max(10, cw * 0.018);
+    rx += Math.sin(now / 18) * amp;
+    ry += Math.cos(now / 15) * amp * 0.7;
+  }
+
+  ctx.save();
+  ctx.globalAlpha = hitting ? 0.5 : 0.28;
+  ctx.fillStyle = hitting ? "#2ecc71" : "#3ddc97";
+  ctx.beginPath();
+  ctx.roundRect(rx, ry, rw, rh, Math.min(28, rw * 0.08));
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = hitting ? "#fff" : "#1faa6a";
+  ctx.lineWidth = Math.max(4, cw * 0.006) * (hitting ? 1.35 : 1);
+  ctx.stroke();
+
+  drawMonsterHpBar(rx, ry, rw, rh, enemy);
+
+  const cx = rx + rw / 2;
+  const cy = ry + rh * 0.58;
+  const hitScale = hitting
+    ? 1.18 + 0.12 * Math.sin(((enemy.hitImpactUntil - now) / HIT_POP_MS) * Math.PI)
+    : 1;
+  const artSize = Math.floor(Math.min(rw, rh) * 1.7 * pulsing * hitScale);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (hitting) ctx.rotate(Math.sin(now / 20) * 0.12);
+  if (hitting) {
+    ctx.shadowColor = "#3ddc97";
+    ctx.shadowBlur = 28;
+  }
+  drawEnemySprite(corner, now, artSize, hitting, enemy.hitImpactUntil);
+  ctx.restore();
+  ctx.restore();
+}
+
 function drawHeadMarker(now, cw, ch) {
   if (!head.ready) return;
   const x = head.x * cw;
   const y = head.y * ch;
   const moving = Math.hypot(head.x - head.px, head.y - head.py);
-  const impact = now < hitImpactUntil;
+  const impact = anyEnemyImpact(now);
   const r = Math.max(16, cw * 0.024) * (impact ? 1.2 : 1 + Math.min(0.2, moving * 10));
 
   ctx.save();
@@ -784,7 +912,7 @@ function drawHeadMarker(now, cw, ch) {
 }
 
 function drawCartoonHands(now, cw, ch) {
-  const impact = now < hitImpactUntil;
+  const impact = anyEnemyImpact(now);
   for (const side of ["left", "right"]) {
     const w = wrists[side];
     if (!w.ready) continue;
@@ -1050,6 +1178,165 @@ function savePlaylistId(id) {
   syncPlaylistInput();
 }
 
+/** Parse YouTube title/author into song + singer for display. */
+function parseTrackInfo(data) {
+  const rawTitle = String(data?.title || "").trim();
+  const rawAuthor = String(data?.author || "").trim();
+  if (!rawTitle) {
+    return { song: "等待曲目…", artist: "—" };
+  }
+
+  const split = rawTitle.match(/^(.+?)\s*[-–—]\s*(.+)$/);
+  if (split) {
+    return { artist: split[1].trim(), song: split[2].trim() };
+  }
+
+  const topic = rawAuthor.match(/^(.+?)\s*-\s*Topic$/i);
+  if (topic) {
+    return { artist: topic[1].trim(), song: rawTitle };
+  }
+
+  return {
+    song: rawTitle,
+    artist: rawAuthor || "未知歌手",
+  };
+}
+
+function updateNowPlaying() {
+  if (!ytSongEl || !ytArtistEl) return;
+  try {
+    const data = ytPlayer?.getVideoData?.();
+    const info = parseTrackInfo(data);
+    ytSongEl.textContent = info.song;
+    ytArtistEl.textContent = info.artist;
+    ytSongEl.title = info.song;
+    ytArtistEl.title = info.artist;
+  } catch {
+    ytSongEl.textContent = "等待曲目…";
+    ytArtistEl.textContent = "—";
+  }
+}
+
+function skipPlaylist(dir) {
+  try {
+    if (!ytPlayer) return;
+    // Allow next/prev to become the new loop target.
+    ytLoopIndex = null;
+    if (dir < 0) ytPlayer.previousVideo?.();
+    else ytPlayer.nextVideo?.();
+    setTimeout(() => {
+      try {
+        if (ytPlayMode === "loop") {
+          const idx = ytPlayer.getPlaylistIndex?.();
+          if (typeof idx === "number" && idx >= 0) ytLoopIndex = idx;
+        }
+      } catch {
+        /* ignore */
+      }
+      updateNowPlaying();
+    }, 350);
+  } catch (err) {
+    console.warn(err);
+    setStatus("切歌失败，请稍后再试");
+  }
+}
+
+function syncPlayModeButton() {
+  if (!ytModeBtn) return;
+  const isLoop = ytPlayMode === "loop";
+  ytModeBtn.textContent = isLoop ? "单曲" : "随机";
+  ytModeBtn.classList.toggle("loop", isLoop);
+  ytModeBtn.title = isLoop ? "当前：单曲循环（点按切换随机）" : "当前：随机播放（点按切换单曲循环）";
+  ytModeBtn.setAttribute("aria-label", ytModeBtn.title);
+}
+
+function applyPlayModeToPlayer(player = ytPlayer) {
+  if (!player) return;
+  try {
+    if (ytPlayMode === "loop") {
+      player.setShuffle?.(false);
+      player.setLoop?.(false);
+      const idx = player.getPlaylistIndex?.();
+      if (typeof idx === "number" && idx >= 0) ytLoopIndex = idx;
+    } else {
+      ytLoopIndex = null;
+      player.setShuffle?.(true);
+      player.setLoop?.(true);
+    }
+  } catch {
+    /* player may not be ready for shuffle/loop yet */
+  }
+}
+
+function setPlayMode(mode) {
+  ytPlayMode = mode === "loop" ? "loop" : "shuffle";
+  try {
+    localStorage.setItem(YT_MODE_STORAGE_KEY, ytPlayMode);
+  } catch {
+    /* ignore */
+  }
+  if (ytPlayMode === "loop") {
+    try {
+      const idx = ytPlayer?.getPlaylistIndex?.();
+      ytLoopIndex = typeof idx === "number" && idx >= 0 ? idx : null;
+    } catch {
+      ytLoopIndex = null;
+    }
+  } else {
+    ytLoopIndex = null;
+  }
+  syncPlayModeButton();
+  applyPlayModeToPlayer();
+  setStatus(ytPlayMode === "loop" ? "已切换：单曲循环" : "已切换：随机播放");
+}
+
+function togglePlayMode() {
+  setPlayMode(ytPlayMode === "loop" ? "shuffle" : "loop");
+}
+
+function replayLoopedTrack() {
+  try {
+    if (typeof ytLoopIndex === "number" && ytLoopIndex >= 0) {
+      ytPlayer.playVideoAt(ytLoopIndex);
+      return;
+    }
+    ytPlayer.seekTo?.(0, true);
+    ytPlayer.playVideo?.();
+  } catch {
+    /* ignore */
+  }
+}
+
+function onYtStateChange(event) {
+  updateNowPlaying();
+  if (ytPlayMode !== "loop" || !ytPlayer) return;
+
+  // YT.PlayerState: ENDED=0, PLAYING=1, BUFFERING=3
+  if (event?.data === 0) {
+    replayLoopedTrack();
+    return;
+  }
+
+  if (event?.data === 1 || event?.data === 3) {
+    try {
+      const idx = ytPlayer.getPlaylistIndex?.();
+      if (ytLoopIndex == null && typeof idx === "number" && idx >= 0) {
+        ytLoopIndex = idx;
+      }
+      // Playlist auto-advanced — snap back to the looped index.
+      if (
+        typeof ytLoopIndex === "number" &&
+        typeof idx === "number" &&
+        idx !== ytLoopIndex
+      ) {
+        ytPlayer.playVideoAt(ytLoopIndex);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 async function ensureYtPlayer() {
   if (ytPlayer && ytReadyPromise) {
     await ytReadyPromise;
@@ -1059,8 +1346,8 @@ async function ensureYtPlayer() {
   ytReadyPromise = new Promise((resolve, reject) => {
     let settled = false;
     ytPlayer = new YT.Player("yt-player", {
-      width: "148",
-      height: "83",
+      width: "96",
+      height: "54",
       videoId: YT_VIDEO_ID,
       playerVars: {
         listType: "playlist",
@@ -1074,16 +1361,13 @@ async function ensureYtPlayer() {
       },
       events: {
         onReady: (event) => {
-          try {
-            event.target.setShuffle(true);
-            event.target.setLoop(true);
-          } catch {
-            /* shuffle may fail before playlist is fully loaded */
-          }
+          applyPlayModeToPlayer(event.target);
+          updateNowPlaying();
           if (settled) return;
           settled = true;
           resolve();
         },
+        onStateChange: onYtStateChange,
         onError: (e) => {
           console.warn("YouTube player error", e?.data);
           if (settled) return;
@@ -1094,6 +1378,7 @@ async function ensureYtPlayer() {
     });
   });
   await ytReadyPromise;
+  updateNowPlaying();
   return ytPlayer;
 }
 
@@ -1119,25 +1404,27 @@ async function applyUserPlaylist(raw, opts = {}) {
       list: id,
       index: 0,
     });
-    try {
-      player.setShuffle(true);
-      player.setLoop(true);
-    } catch {
-      /* ignore */
-    }
+    applyPlayModeToPlayer(player);
     if (play || running) {
       setTimeout(() => {
         try {
           const list = player.getPlaylist?.() ?? null;
           if (list && list.length > 0) {
-            player.playVideoAt(Math.floor(Math.random() * list.length));
+            if (ytPlayMode === "shuffle") {
+              player.playVideoAt(Math.floor(Math.random() * list.length));
+            } else {
+              player.playVideo();
+            }
           } else {
             player.playVideo();
           }
+          updateNowPlaying();
         } catch {
           /* ignore */
         }
       }, 350);
+    } else {
+      updateNowPlaying();
     }
     setStatus(play || running ? "已更换播放列表并开始播放" : "已更换播放列表（开始运动时播放）");
     return true;
@@ -1190,28 +1477,29 @@ async function playWorkoutMusic() {
     const state = player.getPlayerState?.();
     if (state === 1 /* YT.PlayerState.PLAYING */) return;
 
-    try {
-      player.setShuffle(true);
-      player.setLoop(true);
-    } catch {
-      /* ignore */
-    }
+    applyPlayModeToPlayer(player);
     const list = player.getPlaylist?.() ?? null;
     if (list && list.length > 0) {
-      const index = Math.floor(Math.random() * list.length);
-      player.playVideoAt(index);
+      if (ytPlayMode === "shuffle") {
+        player.playVideoAt(Math.floor(Math.random() * list.length));
+      } else {
+        player.playVideo();
+      }
     } else {
-      // Playlist not loaded yet — start then jump to a shuffled next track.
+      // Playlist not loaded yet — start; in shuffle, jump ahead once ready.
       player.playVideo();
-      setTimeout(() => {
-        try {
-          player.setShuffle(true);
-          player.nextVideo();
-        } catch {
-          /* ignore */
-        }
-      }, 400);
+      if (ytPlayMode === "shuffle") {
+        setTimeout(() => {
+          try {
+            applyPlayModeToPlayer(player);
+            player.nextVideo();
+          } catch {
+            /* ignore */
+          }
+        }, 400);
+      }
     }
+    updateNowPlaying();
   } catch (err) {
     console.warn(err);
     setStatus("游戏已开始；YouTube 音乐未能自动播放，可点底部播放器。");
@@ -1326,9 +1614,7 @@ async function toggle() {
 
     score = 0;
     combo = 0;
-    cornerIndex = 0;
-    maxHp = BASE_HITS;
-    spawnMonster(false);
+    resetEnemies();
     wrists.left.ready = false;
     wrists.right.ready = false;
     head.ready = false;
@@ -1338,7 +1624,7 @@ async function toggle() {
     running = true;
     startBtn.textContent = "暂停";
     startBtn.classList.add("playing");
-    setStatus("挥拳或甩头/点头，砸向大角落怪物！");
+    setStatus("随机 1～2 只怪，砸向任一角落！");
     loop();
     await musicPromise;
   } catch (err) {
@@ -1365,6 +1651,18 @@ playlistCancel.addEventListener("click", (e) => {
   e.stopPropagation();
   closePlaylistPop();
 });
+ytPrevBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  skipPlaylist(-1);
+});
+ytNextBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  skipPlaylist(1);
+});
+ytModeBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePlayMode();
+});
 playlistPop.addEventListener("click", (e) => e.stopPropagation());
 playlistInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
@@ -1390,6 +1688,7 @@ window.addEventListener("resize", () => {
 updateCameraButton();
 updateBgButton();
 syncPlaylistInput();
+syncPlayModeButton();
 preloadEnemyImages();
 setStatus("可先「打开摄像头」，或直接点「开始运动」");
 // Warm up YouTube embed so「开始运动」更容易一次点播。

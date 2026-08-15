@@ -169,14 +169,51 @@ body {
   align-self: end;
   z-index: 3;
   pointer-events: auto;
-  width: min(148px, 28vw);
-  aspect-ratio: 16 / 9;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  width: min(420px, calc(100vw - 24px));
   margin-bottom: 10px;
-  border-radius: 8px;
-  overflow: hidden;
+  padding: 8px 10px;
+  border-radius: 12px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-  background: #000;
+  background: rgba(8, 14, 24, 0.82);
+  backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.yt-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.yt-song {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yt-artist {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yt-player-wrap {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  flex-shrink: 0;
 }
 
 .yt-dock iframe,
@@ -185,6 +222,84 @@ body {
   height: 100%;
   display: block;
   border: 0;
+}
+
+.yt-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.yt-skip,
+.yt-mode {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.yt-skip {
+  width: 36px;
+  height: 36px;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.yt-mode {
+  min-width: 52px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.yt-mode.loop {
+  background: rgba(255, 183, 3, 0.9);
+  color: #081018;
+}
+
+.yt-skip:hover,
+.yt-mode:hover {
+  background: rgba(76, 201, 240, 0.85);
+  color: #081018;
+}
+
+.yt-mode.loop:hover {
+  background: rgba(255, 158, 28, 0.95);
+}
+
+.yt-skip:disabled,
+.yt-mode:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 520px) {
+  .yt-dock {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "meta skip"
+      "player skip";
+    width: min(320px, calc(100vw - 20px));
+  }
+
+  .yt-meta {
+    grid-area: meta;
+  }
+
+  .yt-player-wrap {
+    grid-area: player;
+    width: 84px;
+  }
+
+  .yt-transport {
+    grid-area: skip;
+    flex-direction: column;
+  }
 }
 
 .controls {

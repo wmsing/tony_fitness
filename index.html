@@ -30,7 +30,18 @@
       <div id="flash"></div>
     </main>
     <div class="yt-dock" aria-label="运动播放列表">
-      <div id="yt-player"></div>
+      <div class="yt-meta">
+        <div id="yt-song" class="yt-song">等待曲目…</div>
+        <div id="yt-artist" class="yt-artist">—</div>
+      </div>
+      <div class="yt-player-wrap">
+        <div id="yt-player"></div>
+      </div>
+      <div class="yt-transport">
+        <button id="yt-prev" type="button" class="yt-skip" title="上一首" aria-label="上一首">‹</button>
+        <button id="yt-mode" type="button" class="yt-mode" title="切换随机 / 单曲循环" aria-label="切换播放模式">随机</button>
+        <button id="yt-next" type="button" class="yt-skip" title="下一首" aria-label="下一首">›</button>
+      </div>
     </div>
 
     <div class="playlist-menu" id="playlist-menu">
