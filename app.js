@@ -127,6 +127,10 @@ function preloadEnemyImages() {
     "invader-run",
     "assets/enemy/tiny-swords/Units/Red Units/Pawn/Pawn_Run.png"
   );
+  loadEnemyImage(
+    "village-chest",
+    "assets/enemy/tiny-swords/Terrain/Resources/Gold/Gold Stones/Gold Stone 3_Highlight.png"
+  );
 }
 
 function drawEnemySprite(corner, now, artSize, useAttack, hitImpactUntil = 0) {
@@ -249,6 +253,9 @@ const ALLY_ATTACK_DMG = 2;
 const ALLY_REPAIR_MS = 800;
 const ALLY_REPAIR_AMT = 3;
 const ALLY_LIFETIME_MS = 16000;
+/** Stay on current repair target unless another is clearly lower HP. */
+const REPAIR_STICK_RATIO = 0.14;
+const ALLY_ARRIVE_DIST = 0.04;
 const DIFFICULTY_STORAGE_KEY = "tony_fitness_difficulty";
 
 /** @typedef {'easy' | 'normal' | 'hard' | 'insane'} DifficultyId */
@@ -345,6 +352,19 @@ const EVENT_COOLDOWN_MIN_MS = 18000;
 const EVENT_COOLDOWN_MAX_MS = 28000;
 const EVENT_DURATION_MS = 8000;
 const EVENT_REPAIR_BONUS_RATIO = 0.12;
+/** Village random buff chests — only on integer level-ups. */
+const CHEST_CORNER_INDEXES = [2, 3]; // 右下 / 左下
+const CHEST_LIFETIME_MS = 7500;
+const CHEST_BUFF_MS = 10000;
+const CHEST_HEAL_RATIO = 0.28;
+const VILLAGE_XP_PER_LEVEL = 12;
+const VILLAGE_XP_KILL = 3;
+const VILLAGE_XP_ELITE = 6;
+const VILLAGE_XP_SUMMON = 4;
+/** Chests only at level 10 / 20 / 30 / … */
+const CHEST_LEVEL_STEP = 10;
+const ALLY_HASTE_MULT = 1.85;
+/** @typedef {'heal' | 'haste' | 'freeze'} ChestReward */
 
 /** Punch impact VFX from Tiny Swords Particle FX. */
 const HIT_FX = [
@@ -493,7 +513,7 @@ let buildings = [];
  */
 let rolePads = [];
 /**
- * @type {{type: 'warrior' | 'repairer', x: number, y: number, born: number, nextActionAt: number}[]}
+ * @type {{type: 'warrior' | 'repairer', x: number, y: number, born: number, nextActionAt: number, targetKey: string | null}[]}
  */
 let allies = [];
 /**
@@ -517,6 +537,19 @@ let invaderIdSeq = 1;
  * @type {null | { type: 'repair' | 'warrior', until: number, buildingKey?: string, eliteId?: number }}
  */
 let activeEvent = null;
+/**
+ * Short-lived corner chest target.
+ * @type {null | { cornerIndex: number, born: number, until: number, hitImpactUntil: number }}
+ */
+let villageChest = null;
+/** Queued chest spawns from integer level-ups. */
+let chestPending = 0;
+let villageXp = 0;
+let villageLevel = 0;
+/** Last milestone (10/20/30…) that already granted a chest. */
+let lastChestMilestone = 0;
+let allyHasteUntil = 0;
+let invaderFreezeUntil = 0;
 
 const wrists = {
   left: { x: 0.5, y: 0.5, px: 0.5, py: 0.5, angle: -Math.PI / 2, ready: false },
@@ -626,6 +659,86 @@ function drawEventBanner(now, cw, ch) {
   ctx.restore();
 }
 
+function drawBuffBanners(now, cw, ch) {
+  const lines = [];
+  if (now < allyHasteUntil) {
+    const sec = Math.ceil((allyHasteUntil - now) / 1000);
+    lines.push({ text: `友军加速 ${sec}s`, color: "rgba(76, 201, 240, 0.9)" });
+  }
+  if (now < invaderFreezeUntil) {
+    const sec = Math.ceil((invaderFreezeUntil - now) / 1000);
+    lines.push({ text: `敌人定身 ${sec}s`, color: "rgba(120, 190, 255, 0.9)" });
+  }
+  if (!lines.length) return;
+  const h = Math.max(28, ch * 0.036);
+  let y = ch * 0.175;
+  for (const line of lines) {
+    const w = Math.min(cw * 0.5, 280);
+    const x = (cw - w) / 2;
+    ctx.save();
+    ctx.fillStyle = line.color;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 8);
+    ctx.fill();
+    ctx.fillStyle = "#081018";
+    ctx.font = `bold ${Math.max(13, Math.floor(h * 0.48))}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(line.text, cw / 2, y + h / 2);
+    ctx.restore();
+    y += h + 6;
+  }
+}
+
+function drawVillageChest(now, cw, ch) {
+  if (!villageChest || now > villageChest.until) return;
+  const corner = CORNERS[villageChest.cornerIndex % CORNERS.length];
+  const box = cornerNormRect(corner);
+  let rx = box.x * cw;
+  let ry = box.y * ch;
+  const rw = box.w * cw;
+  const rh = box.h * ch;
+  const pulse = 0.88 + 0.12 * Math.sin(now / 140);
+  const remain = Math.max(0, villageChest.until - now);
+  const urgent = remain < 2500;
+  const hitting = now < villageChest.hitImpactUntil;
+
+  ctx.save();
+  ctx.globalAlpha = hitting ? 0.55 : 0.28 + 0.12 * pulse;
+  ctx.fillStyle = urgent ? "#ff9f1c" : "#ffe566";
+  ctx.beginPath();
+  ctx.roundRect(rx, ry, rw, rh, Math.min(24, rw * 0.08));
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = Math.max(3, cw * 0.005);
+  ctx.setLineDash(urgent ? [10, 8] : []);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const cx = rx + rw * 0.5;
+  const cy = ry + rh * 0.52;
+  const size = Math.min(rw, rh) * 0.42 * pulse;
+  const img = enemyImages.get("village-chest");
+  if (img?.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
+  } else {
+    ctx.fillStyle = "#f4d35e";
+    ctx.beginPath();
+    ctx.roundRect(cx - size * 0.4, cy - size * 0.3, size * 0.8, size * 0.6, 8);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#081018";
+  ctx.font = `bold ${Math.max(16, Math.floor(cw * 0.032))}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText("增益宝箱", cx, ry + rh * 0.18);
+  ctx.fillStyle = urgent ? "#ff5a5f" : "#fff";
+  ctx.font = `bold ${Math.max(14, Math.floor(cw * 0.026))}px sans-serif`;
+  ctx.fillText(`${Math.ceil(remain / 1000)}s`, cx, ry + rh * 0.3);
+  ctx.restore();
+}
+
 function showMenu() {
   stopLoop();
   gameMode = null;
@@ -689,6 +802,13 @@ function enterMode(mode) {
   hitFx = [];
   activeEvent = null;
   nextEventAt = 0;
+  villageChest = null;
+  chestPending = 0;
+  villageXp = 0;
+  villageLevel = 0;
+  lastChestMilestone = 0;
+  allyHasteUntil = 0;
+  invaderFreezeUntil = 0;
   if (mode === "smash") {
     if (scoreLabel) scoreLabel.textContent = "分数";
     if (comboLabel) comboLabel.textContent = "连击";
@@ -750,6 +870,13 @@ function resetVillage() {
   resetComboTitleState();
   activeEvent = null;
   nextEventAt = performance.now() + EVENT_FIRST_DELAY_MS;
+  villageChest = null;
+  chestPending = 0;
+  villageXp = 0;
+  villageLevel = 0;
+  lastChestMilestone = 0;
+  allyHasteUntil = 0;
+  invaderFreezeUntil = 0;
   invaderIdSeq = 1;
   updateHud();
 }
@@ -773,10 +900,51 @@ function nearestBuilding(x, y) {
   return best;
 }
 
-function lowestHpBuilding() {
-  const alive = aliveBuildings();
-  if (!alive.length) return null;
-  return alive.reduce((a, b) => (a.hp / a.maxHp <= b.hp / b.maxHp ? a : b));
+function pickRepairTarget(ally) {
+  if (activeEvent?.type === "repair" && activeEvent.buildingKey) {
+    const urgent = buildings.find(
+      (b) => b.key === activeEvent.buildingKey && b.hp > 0
+    );
+    if (urgent) {
+      ally.targetKey = urgent.key;
+      return urgent;
+    }
+  }
+
+  const needy = aliveBuildings().filter((b) => b.hp < b.maxHp);
+  if (!needy.length) {
+    ally.targetKey = null;
+    return null;
+  }
+
+  const lowest = needy.reduce((a, b) =>
+    a.hp / a.maxHp <= b.hp / b.maxHp ? a : b
+  );
+  const sticky = ally.targetKey
+    ? needy.find((b) => b.key === ally.targetKey)
+    : null;
+
+  if (
+    sticky &&
+    sticky.hp / sticky.maxHp <= lowest.hp / lowest.maxHp + REPAIR_STICK_RATIO
+  ) {
+    return sticky;
+  }
+
+  ally.targetKey = lowest.key;
+  return lowest;
+}
+
+/** Move toward a point without overshooting the arrive radius. */
+function moveAllyToward(ally, tx, ty, speed, dt) {
+  const dx = tx - ally.x;
+  const dy = ty - ally.y;
+  const dist = Math.hypot(dx, dy) || 0.0001;
+  if (dist <= ALLY_ARRIVE_DIST) return dist;
+  const step = Math.min(speed * dt, Math.max(0, dist - ALLY_ARRIVE_DIST * 0.35));
+  ally.x += (dx / dist) * step;
+  ally.y += (dy / dist) * step;
+  return Math.hypot(tx - ally.x, ty - ally.y);
 }
 
 function currentInvaderCap() {
@@ -834,6 +1002,113 @@ function clearActiveEvent(message) {
     performance.now() +
     randomInt(EVENT_COOLDOWN_MIN_MS, EVENT_COOLDOWN_MAX_MS);
   if (message) setStatus(message);
+}
+
+function villageXpIntoLevel() {
+  return villageXp % VILLAGE_XP_PER_LEVEL;
+}
+
+function addVillageXp(amount, reason = "") {
+  if (gameMode !== "village" || villageLost || amount <= 0) return;
+  villageXp += amount;
+  const reached = Math.floor(villageXp / VILLAGE_XP_PER_LEVEL);
+  if (reached <= villageLevel) {
+    updateHud();
+    return;
+  }
+  villageLevel = reached;
+
+  let granted = 0;
+  while (lastChestMilestone + CHEST_LEVEL_STEP <= villageLevel) {
+    lastChestMilestone += CHEST_LEVEL_STEP;
+    chestPending += 1;
+    granted += 1;
+  }
+
+  if (granted > 0) {
+    setStatus(
+      `达到 ${lastChestMilestone} 级！角落出现增益宝箱`
+    );
+  } else if (reason) {
+    setStatus(`${reason} · 等级 ${villageLevel}`);
+  }
+  updateHud();
+}
+
+function trySpawnVillageChest(now) {
+  if (villageChest || villageLost || gameMode !== "village") return;
+  if (chestPending <= 0) return;
+  chestPending -= 1;
+  const cornerIndex =
+    CHEST_CORNER_INDEXES[randomInt(0, CHEST_CORNER_INDEXES.length - 1)];
+  villageChest = {
+    cornerIndex,
+    born: now,
+    until: now + CHEST_LIFETIME_MS,
+    hitImpactUntil: 0,
+  };
+  setStatus(`等级 ${lastChestMilestone} 奖励：角落出现增益宝箱！快砸开`);
+}
+
+function pickChestReward() {
+  /** @type {ChestReward[]} */
+  const pool = ["heal", "haste", "freeze"];
+  return pool[randomInt(0, pool.length - 1)];
+}
+
+function applyChestReward(reward, now) {
+  const corner = CORNERS[villageChest?.cornerIndex % CORNERS.length];
+  const box = corner ? cornerNormRect(corner) : { x: 0.5, y: 0.5, w: 0, h: 0 };
+  const cx = box.x + box.w * 0.5;
+  const cy = box.y + box.h * 0.4;
+
+  if (reward === "heal") {
+    let healed = 0;
+    for (const b of aliveBuildings()) {
+      const amt = Math.max(12, Math.round(b.maxHp * CHEST_HEAL_RATIO));
+      const before = b.hp;
+      b.hp = Math.min(b.maxHp, b.hp + amt);
+      if (b.hp > before) {
+        healed += 1;
+        damagePops.push({
+          x: b.x,
+          y: b.y - 0.14,
+          born: now,
+          text: `+${b.hp - before}`,
+        });
+      }
+    }
+    damagePops.push({ x: cx, y: cy, born: now, text: "全村回血" });
+    setStatus(
+      healed > 0 ? `宝箱：全建筑回血（${healed} 座）` : "宝箱：建筑已满血"
+    );
+  } else if (reward === "haste") {
+    allyHasteUntil = Math.max(allyHasteUntil, now + CHEST_BUFF_MS);
+    damagePops.push({ x: cx, y: cy, born: now, text: "友军加速!" });
+    setStatus("宝箱：友军加速 10 秒！");
+  } else {
+    invaderFreezeUntil = Math.max(invaderFreezeUntil, now + CHEST_BUFF_MS);
+    damagePops.push({ x: cx, y: cy, born: now, text: "敌人定身!" });
+    setStatus("宝箱：敌人停止走路 10 秒！");
+  }
+  celebrateUntil = now + 800;
+  flashHit();
+}
+
+function applyChestHit(source) {
+  const now = performance.now();
+  if (!villageChest || villageLost || now < hitCooldownUntil) return;
+  if (now > villageChest.until) {
+    villageChest = null;
+    return;
+  }
+  hitCooldownUntil = now + HIT_COOLDOWN_MS;
+  registerHitCombo();
+  villageChest.hitImpactUntil = now + HIT_POP_MS;
+  const reward = pickChestReward();
+  applyChestReward(reward, now);
+  villageChest = null;
+  updateHud();
 }
 
 function resolveRepairEvent(building, reason = "危机解除") {
@@ -903,10 +1178,12 @@ function spawnAlliesFromPad(pad) {
       y: cy + (Math.random() - 0.5) * 0.06,
       born: now,
       nextActionAt: now + 200 + i * 40,
+      targetKey: null,
     });
   }
   villageSummons += count;
   score = villageKills;
+  addVillageXp(VILLAGE_XP_SUMMON, pad.type === "warrior" ? "召唤战士" : "召唤维修");
   damagePops.push({
     x: cx,
     y: box.y + box.h * 0.25,
@@ -968,6 +1245,12 @@ function updateVillage(dt, now) {
 
   tickHitComboTimeout(now);
   tryStartVillageEvent(now);
+  trySpawnVillageChest(now);
+
+  if (villageChest && now > villageChest.until) {
+    villageChest = null;
+    setStatus("宝箱消失了……升级后再来");
+  }
 
   if (activeEvent && now > activeEvent.until) {
     if (activeEvent.type === "repair") {
@@ -990,6 +1273,9 @@ function updateVillage(dt, now) {
     nextInvaderAt = now + cfg.spawnMs + randomInt(0, Math.floor(cfg.spawnMs * 0.35));
   }
 
+  const invadersFrozen = now < invaderFreezeUntil;
+  const allyHaste = now < allyHasteUntil ? ALLY_HASTE_MULT : 1;
+
   // Invaders move / attack buildings
   for (const inv of invaders) {
     let target = buildings.find((b) => b.key === inv.targetKey && b.hp > 0);
@@ -1005,6 +1291,7 @@ function updateVillage(dt, now) {
     const dist = Math.hypot(dx, dy) || 0.0001;
     const speed = inv.speed || diffCfg().speed;
     const dmg = inv.attackDmg || diffCfg().attackDmg;
+    if (invadersFrozen) continue;
     if (dist > 0.045) {
       inv.x += (dx / dist) * speed * dt;
       inv.y += (dy / dist) * speed * dt;
@@ -1040,16 +1327,25 @@ function updateVillage(dt, now) {
         }
       }
       if (!target) continue;
-      if (bestD > 0.04) {
-        ally.x += ((target.x - ally.x) / bestD) * ALLY_SPEED * dt;
-        ally.y += ((target.y - ally.y) / bestD) * ALLY_SPEED * dt;
+      if (bestD > ALLY_ARRIVE_DIST) {
+        moveAllyToward(
+          ally,
+          target.x,
+          target.y,
+          ALLY_SPEED * allyHaste,
+          dt
+        );
       } else if (now >= ally.nextActionAt) {
         target.hp -= ALLY_ATTACK_DMG;
-        ally.nextActionAt = now + ALLY_ATTACK_MS;
+        ally.nextActionAt = now + ALLY_ATTACK_MS / allyHaste;
         if (target.hp <= 0) {
           const wasElite = target.elite;
           villageKills += wasElite ? 3 : 1;
           score = villageKills;
+          addVillageXp(
+            wasElite ? VILLAGE_XP_ELITE : VILLAGE_XP_KILL,
+            wasElite ? "击退精英" : "击退敌兵"
+          );
           if (
             wasElite &&
             activeEvent?.type === "warrior" &&
@@ -1066,28 +1362,18 @@ function updateVillage(dt, now) {
         }
       }
     } else {
-      let target = lowestHpBuilding();
-      if (
-        activeEvent?.type === "repair" &&
-        activeEvent.buildingKey
-      ) {
-        const urgent = buildings.find(
-          (b) => b.key === activeEvent.buildingKey && b.hp > 0
-        );
-        if (urgent) target = urgent;
-      }
-      if (!target || target.hp >= target.maxHp) continue;
+      const target = pickRepairTarget(ally);
+      if (!target) continue;
       const tx = target.x;
       const ty = Math.max(0.12, target.y - 0.05);
-      const dist = Math.hypot(tx - ally.x, ty - ally.y) || 0.0001;
-      if (dist > 0.04) {
-        ally.x += ((tx - ally.x) / dist) * ALLY_SPEED * dt;
-        ally.y += ((ty - ally.y) / dist) * ALLY_SPEED * dt;
+      const dist = moveAllyToward(ally, tx, ty, ALLY_SPEED * allyHaste, dt);
+      if (dist > ALLY_ARRIVE_DIST) {
+        /* still walking */
       } else if (now >= ally.nextActionAt) {
         const before = target.hp;
         target.hp = Math.min(target.maxHp, target.hp + ALLY_REPAIR_AMT);
         if (target.hp > before) villageRepairs += 1;
-        ally.nextActionAt = now + ALLY_REPAIR_MS;
+        ally.nextActionAt = now + ALLY_REPAIR_MS / allyHaste;
         if (
           activeEvent?.type === "repair" &&
           activeEvent.buildingKey === target.key &&
@@ -1095,6 +1381,7 @@ function updateVillage(dt, now) {
         ) {
           resolveRepairEvent(target);
         }
+        if (target.hp >= target.maxHp) ally.targetKey = null;
       }
     }
   }
@@ -1157,6 +1444,47 @@ function drawBuildingHpBar(bx, by, bw, building) {
   ctx.fillRect(x, y, barW, barH);
   ctx.fillStyle = ratio > 0.35 ? "#3ddc97" : "#ff5a5f";
   ctx.fillRect(x, y, barW * ratio, barH);
+}
+
+/** Big level label above the main castle. */
+function drawCastleLevelLabel(bx, by, bw, building) {
+  if (gameMode !== "village" || building.key !== "bg-castle") return;
+  if (building.hp != null && building.hp <= 0) return;
+
+  const cx = bx + bw / 2;
+  const mainSize = Math.max(42, Math.floor(bw * 0.48));
+  const subSize = Math.max(16, Math.floor(mainSize * 0.32));
+  const xpNow = villageXpIntoLevel();
+  const nextChestAt =
+    lastChestMilestone + CHEST_LEVEL_STEP;
+  const yMain = by - Math.max(28, canvas.height * 0.028) - mainSize * 0.15;
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(4, mainSize * 0.08);
+  ctx.strokeStyle = "rgba(8, 16, 24, 0.85)";
+  ctx.fillStyle = "#ffe566";
+  ctx.font = `900 ${mainSize}px system-ui, sans-serif`;
+  const label = String(villageLevel);
+  ctx.strokeText(label, cx, yMain);
+  ctx.fillText(label, cx, yMain);
+
+  ctx.lineWidth = Math.max(3, subSize * 0.12);
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${subSize}px system-ui, sans-serif`;
+  ctx.strokeText("等级", cx, yMain - mainSize * 0.55);
+  ctx.fillText("等级", cx, yMain - mainSize * 0.55);
+
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.font = `bold ${Math.max(12, Math.floor(subSize * 0.85))}px system-ui, sans-serif`;
+  ctx.fillText(
+    `${xpNow}/${VILLAGE_XP_PER_LEVEL} · 宝箱 ${nextChestAt}级`,
+    cx,
+    yMain + mainSize * 0.55
+  );
+  ctx.restore();
 }
 
 function drawRolePad(pad, now, cw, ch) {
@@ -1578,7 +1906,20 @@ function checkWristHit(side, dt) {
   if (!w.ready || dt <= 0) return;
 
   if (gameMode === "village") {
-    if (villageLost || rolePads.length === 0) return;
+    if (villageLost) return;
+    if (villageChest) {
+      const corner = CORNERS[villageChest.cornerIndex % CORNERS.length];
+      const wasOutside = !pointInCorner(w.px, w.py, corner);
+      const nowInside = pointInCorner(w.x, w.y, corner);
+      if (wasOutside && nowInside) {
+        const speed = Math.hypot(w.x - w.px, w.y - w.py) / dt;
+        if (speed >= HIT_SPEED) {
+          applyChestHit("punch");
+          return;
+        }
+      }
+    }
+    if (rolePads.length === 0) return;
     for (const pad of rolePads) {
       const corner = CORNERS[pad.cornerIndex % CORNERS.length];
       const wasOutside = !pointInCorner(w.px, w.py, corner);
@@ -1629,11 +1970,26 @@ function checkHeadHit(dt) {
 
   const targets =
     gameMode === "village"
-      ? rolePads.map((pad) => ({
-          pad,
-          corner: CORNERS[pad.cornerIndex % CORNERS.length],
-        }))
-      : enemies.map((enemy) => ({ enemy, corner: cornerOf(enemy) }));
+      ? [
+          ...(villageChest
+            ? [
+                {
+                  kind: "chest",
+                  corner: CORNERS[villageChest.cornerIndex % CORNERS.length],
+                },
+              ]
+            : []),
+          ...rolePads.map((pad) => ({
+            kind: "pad",
+            pad,
+            corner: CORNERS[pad.cornerIndex % CORNERS.length],
+          })),
+        ]
+      : enemies.map((enemy) => ({
+          kind: "enemy",
+          enemy,
+          corner: cornerOf(enemy),
+        }));
 
   if (!targets.length || (gameMode === "village" && villageLost)) return;
 
@@ -1651,7 +2007,8 @@ function checkHeadHit(dt) {
     const isJab = speed >= HEAD_HIT_SPEED;
     const source = isNod ? "nod" : isSlip ? "slip" : isJab ? "head" : null;
     if (!source) continue;
-    if (gameMode === "village") applyRoleHit(source, t.pad);
+    if (t.kind === "chest") applyChestHit(source);
+    else if (t.kind === "pad") applyRoleHit(source, t.pad);
     else applyHit(source, t.enemy);
     return;
   }
@@ -1702,6 +2059,7 @@ function drawTinySwordsBackground(cw, ch, buildingList = null) {
     if (b.hp != null && b.hp <= 0) ctx.restore();
     else if (b.hp != null && b.maxHp != null && b.hp > 0) {
       drawBuildingHpBar(x, y, drawW, b);
+      drawCastleLevelLabel(x, y, drawW, b);
       const isUrgent =
         activeEvent?.type === "repair" && activeEvent.buildingKey === b.key;
       if (isUrgent) {
@@ -1759,19 +2117,23 @@ function drawScene(mirroredLandmarks) {
 
   if (gameMode === "village") {
     for (const pad of rolePads) drawRolePad(pad, now, cw, ch);
+    drawVillageChest(now, cw, ch);
     for (const inv of invaders) {
       const elite = Boolean(inv.elite);
       const size = Math.max(36, cw * 0.055) * (elite ? 1.45 : 1);
-      if (elite) {
+      const frozen = now < invaderFreezeUntil;
+      if (elite || frozen) {
         ctx.save();
-        ctx.strokeStyle = "#ff2d55";
+        ctx.strokeStyle = frozen ? "#7ec8ff" : "#ff2d55";
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(inv.x * cw, inv.y * ch, size * 0.55, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
+      if (frozen) ctx.globalAlpha = 0.65;
       drawUnitSprite("invader-run", inv.x * cw, inv.y * ch, size, 6);
+      ctx.globalAlpha = 1;
       // tiny hp
       const bw = size * 0.8;
       const bh = 6;
@@ -1789,6 +2151,11 @@ function drawScene(mirroredLandmarks) {
         ctx.font = `bold ${Math.max(12, Math.floor(cw * 0.022))}px sans-serif`;
         ctx.textAlign = "center";
         ctx.fillText("精英", inv.x * cw, inv.y * ch - size * 0.7);
+      } else if (frozen) {
+        ctx.fillStyle = "#7ec8ff";
+        ctx.font = `bold ${Math.max(11, Math.floor(cw * 0.02))}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText("定身", inv.x * cw, inv.y * ch - size * 0.65);
       }
     }
     for (const ally of allies) {
@@ -1796,6 +2163,15 @@ function drawScene(mirroredLandmarks) {
       const key =
         ally.type === "warrior" ? "ally-warrior-run" : "ally-repair-run";
       const cols = ally.type === "warrior" ? 6 : 4;
+      if (now < allyHasteUntil) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(76, 201, 240, 0.85)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ally.x * cw, ally.y * ch, size * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
       drawUnitSprite(key, ally.x * cw, ally.y * ch, size, cols);
     }
   } else {
@@ -1807,6 +2183,7 @@ function drawScene(mirroredLandmarks) {
   drawDamagePops(now, cw, ch);
   drawHitFx(now, cw, ch);
   drawEventBanner(now, cw, ch);
+  drawBuffBanners(now, cw, ch);
   drawTitleToast(now, cw, ch);
 
   if (showCameraBg) {
