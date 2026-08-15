@@ -102,6 +102,31 @@ function preloadEnemyImages() {
   for (const fx of HIT_FX) {
     loadEnemyImage(fx.key, fx.src);
   }
+  // Village mode units
+  loadEnemyImage(
+    "ally-warrior",
+    "assets/enemy/tiny-swords/Units/Blue Units/Warrior/Warrior_Idle.png"
+  );
+  loadEnemyImage(
+    "ally-warrior-run",
+    "assets/enemy/tiny-swords/Units/Blue Units/Warrior/Warrior_Run.png"
+  );
+  loadEnemyImage(
+    "ally-repair",
+    "assets/enemy/tiny-swords/Units/Blue Units/Monk/Idle.png"
+  );
+  loadEnemyImage(
+    "ally-repair-run",
+    "assets/enemy/tiny-swords/Units/Blue Units/Monk/Run.png"
+  );
+  loadEnemyImage(
+    "invader",
+    "assets/enemy/tiny-swords/Units/Red Units/Pawn/Pawn_Idle.png"
+  );
+  loadEnemyImage(
+    "invader-run",
+    "assets/enemy/tiny-swords/Units/Red Units/Pawn/Pawn_Run.png"
+  );
 }
 
 function drawEnemySprite(corner, now, artSize, useAttack, hitImpactUntil = 0) {
@@ -172,6 +197,7 @@ const BG_BUILDINGS = [
     x: 0.5,
     y: 0.42,
     h: 0.28,
+    maxHp: 160,
   },
   {
     key: "bg-tower",
@@ -179,6 +205,7 @@ const BG_BUILDINGS = [
     x: 0.32,
     y: 0.5,
     h: 0.22,
+    maxHp: 100,
   },
   {
     key: "bg-archery",
@@ -186,6 +213,7 @@ const BG_BUILDINGS = [
     x: 0.68,
     y: 0.5,
     h: 0.22,
+    maxHp: 100,
   },
   {
     key: "bg-house1",
@@ -193,6 +221,7 @@ const BG_BUILDINGS = [
     x: 0.42,
     y: 0.58,
     h: 0.16,
+    maxHp: 80,
   },
   {
     key: "bg-house2",
@@ -200,6 +229,7 @@ const BG_BUILDINGS = [
     x: 0.58,
     y: 0.58,
     h: 0.16,
+    maxHp: 80,
   },
   {
     key: "bg-barracks",
@@ -207,8 +237,24 @@ const BG_BUILDINGS = [
     x: 0.5,
     y: 0.68,
     h: 0.18,
+    maxHp: 110,
   },
 ];
+
+const ROLE_CHARGE_MIN = 4;
+const ROLE_CHARGE_MAX = 8;
+const MAX_INVADERS = 8;
+const INVADER_SPAWN_MS = 2600;
+const INVADER_SPEED = 0.045;
+const INVADER_HP = 8;
+const INVADER_ATTACK_MS = 1200;
+const INVADER_ATTACK_DMG = 2;
+const ALLY_SPEED = 0.055;
+const ALLY_ATTACK_MS = 700;
+const ALLY_ATTACK_DMG = 2;
+const ALLY_REPAIR_MS = 800;
+const ALLY_REPAIR_AMT = 3;
+const ALLY_LIFETIME_MS = 16000;
 
 /** Punch impact VFX from Tiny Swords Particle FX. */
 const HIT_FX = [
@@ -299,6 +345,17 @@ const comboEl = document.getElementById("combo");
 const promptEl = document.getElementById("prompt");
 const hpFill = document.getElementById("hp-fill");
 const hpText = document.getElementById("hp-text");
+const scoreLabel = document.getElementById("score-label");
+const comboLabel = document.getElementById("combo-label");
+const appEl = document.getElementById("app");
+const modeMenu = document.getElementById("mode-menu");
+const modeSmashBtn = document.getElementById("mode-smash");
+const modeVillageBtn = document.getElementById("mode-village");
+const menuBtn = document.getElementById("menu-btn");
+const resultOverlay = document.getElementById("result-overlay");
+const resultTitle = document.getElementById("result-title");
+const resultBody = document.getElementById("result-body");
+const resultMenuBtn = document.getElementById("result-menu-btn");
 
 let poseLandmarker = null;
 let running = false;
@@ -317,6 +374,10 @@ let ytLoopIndex = null;
 /** When false, canvas uses black bg; camera still runs for pose. */
 let showCameraBg = false;
 
+/** @type {null | 'smash' | 'village'} */
+let gameMode = null;
+let villageLost = false;
+
 const MIN_ACTIVE_ENEMIES = 1;
 const MAX_ACTIVE_ENEMIES = 2;
 
@@ -325,7 +386,7 @@ let combo = 0;
 let hitCooldownUntil = 0;
 let celebrateUntil = 0;
 /**
- * Active monsters on screen (1–2).
+ * Active monsters on screen (1–2). Smash mode only.
  * @type {{cornerIndex: number, hp: number, maxHp: number, hitImpactUntil: number, hitShakeUntil: number}[]}
  */
 let enemies = [];
@@ -333,6 +394,26 @@ let enemies = [];
 let damagePops = [];
 /** @type {{x: number, y: number, born: number, fxKey: string, scale: number}[]} */
 let hitFx = [];
+
+/** @type {{key: string, src: string, x: number, y: number, h: number, hp: number, maxHp: number}[]} */
+let buildings = [];
+/**
+ * @type {{type: 'warrior' | 'repairer', cornerIndex: number, hp: number, maxHp: number, hitImpactUntil: number, hitShakeUntil: number}[]}
+ */
+let rolePads = [];
+/**
+ * @type {{type: 'warrior' | 'repairer', x: number, y: number, born: number, nextActionAt: number}[]}
+ */
+let allies = [];
+/**
+ * @type {{x: number, y: number, hp: number, maxHp: number, targetKey: string | null, nextAttackAt: number}[]}
+ */
+let invaders = [];
+let nextInvaderAt = 0;
+let villageStartedAt = 0;
+let villageKills = 0;
+let villageSummons = 0;
+let villageRepairs = 0;
 
 const wrists = {
   left: { x: 0.5, y: 0.5, px: 0.5, py: 0.5, angle: -Math.PI / 2, ready: false },
@@ -350,6 +431,419 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+function showMenu() {
+  stopLoop();
+  gameMode = null;
+  villageLost = false;
+  if (resultOverlay) resultOverlay.hidden = true;
+  appEl?.classList.add("menu-open");
+  setStatus("选择模式后开始运动");
+  resizeCanvas();
+  drawMenuPreview();
+}
+
+function enterMode(mode) {
+  gameMode = mode;
+  villageLost = false;
+  if (resultOverlay) resultOverlay.hidden = true;
+  appEl?.classList.remove("menu-open");
+  score = 0;
+  combo = 0;
+  enemies = [];
+  rolePads = [];
+  allies = [];
+  invaders = [];
+  buildings = [];
+  damagePops = [];
+  hitFx = [];
+  if (mode === "smash") {
+    if (scoreLabel) scoreLabel.textContent = "分数";
+    if (comboLabel) comboLabel.textContent = "连击";
+    resetEnemies();
+    setStatus("砸怪模式：点「开始运动」开练");
+  } else {
+    if (scoreLabel) scoreLabel.textContent = "击退";
+    if (comboLabel) comboLabel.textContent = "召唤";
+    resetVillage();
+    setStatus("守村模式：点「开始运动」，给战士/维修充能");
+  }
+  updateHud();
+  resizeCanvas();
+  if (!isCameraOn()) drawCameraOffPlaceholder();
+  else drawScene(null);
+}
+
+function roleChargeMax() {
+  return Math.min(
+    ROLE_CHARGE_MAX + Math.floor(score / 8),
+    ROLE_CHARGE_MAX + 4
+  );
+}
+
+function makeRolePad(type, cornerIndex) {
+  const maxHp = randomInt(ROLE_CHARGE_MIN, roleChargeMax());
+  return {
+    type,
+    cornerIndex,
+    hp: maxHp,
+    maxHp,
+    hitImpactUntil: 0,
+    hitShakeUntil: 0,
+  };
+}
+
+function resetVillage() {
+  buildings = BG_BUILDINGS.map((b) => ({
+    key: b.key,
+    src: b.src,
+    x: b.x,
+    y: b.y,
+    h: b.h,
+    maxHp: b.maxHp || 80,
+    hp: b.maxHp || 80,
+  }));
+  rolePads = [
+    makeRolePad("warrior", 1), // 左上
+    makeRolePad("repairer", 0), // 右上
+  ];
+  allies = [];
+  invaders = [];
+  nextInvaderAt = performance.now() + 1200;
+  villageStartedAt = performance.now();
+  villageKills = 0;
+  villageSummons = 0;
+  villageRepairs = 0;
+  villageLost = false;
+  updateHud();
+}
+
+function aliveBuildings() {
+  return buildings.filter((b) => b.hp > 0);
+}
+
+function nearestBuilding(x, y) {
+  const alive = aliveBuildings();
+  if (!alive.length) return null;
+  let best = alive[0];
+  let bestD = Infinity;
+  for (const b of alive) {
+    const d = Math.hypot(b.x - x, b.y - 0.08 - y);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+function lowestHpBuilding() {
+  const alive = aliveBuildings();
+  if (!alive.length) return null;
+  return alive.reduce((a, b) => (a.hp / a.maxHp <= b.hp / b.maxHp ? a : b));
+}
+
+function currentInvaderCap() {
+  const elapsed = (performance.now() - villageStartedAt) / 1000;
+  // Ramp: 4 → 8 over a few minutes so early game isn't empty, late game is denser.
+  return Math.min(MAX_INVADERS, 4 + Math.floor(elapsed / 45));
+}
+
+function spawnInvader() {
+  if (invaders.length >= currentInvaderCap() || !aliveBuildings().length) return;
+  const edge = randomInt(0, 3);
+  let x = 0.5;
+  let y = 0.5;
+  if (edge === 0) {
+    x = Math.random();
+    y = 0.02;
+  } else if (edge === 1) {
+    x = Math.random();
+    y = 0.92;
+  } else if (edge === 2) {
+    x = 0.02;
+    y = 0.15 + Math.random() * 0.7;
+  } else {
+    x = 0.98;
+    y = 0.15 + Math.random() * 0.7;
+  }
+  const target = nearestBuilding(x, y);
+  invaders.push({
+    x,
+    y,
+    hp: INVADER_HP,
+    maxHp: INVADER_HP,
+    targetKey: target?.key ?? null,
+    nextAttackAt: 0,
+  });
+}
+
+function spawnAlliesFromPad(pad) {
+  const count = pad.maxHp;
+  const corner = CORNERS[pad.cornerIndex % CORNERS.length];
+  const box = cornerNormRect(corner);
+  const cx = box.x + box.w * 0.5;
+  const cy = box.y + box.h * 0.55;
+  const now = performance.now();
+  for (let i = 0; i < count; i++) {
+    allies.push({
+      type: pad.type,
+      x: cx + (Math.random() - 0.5) * 0.08,
+      y: cy + (Math.random() - 0.5) * 0.06,
+      born: now,
+      nextActionAt: now + 200 + i * 40,
+    });
+  }
+  villageSummons += count;
+  score = villageKills;
+  combo = villageSummons;
+  damagePops.push({
+    x: cx,
+    y: box.y + box.h * 0.25,
+    born: now,
+    text: pad.type === "warrior" ? `战士+${count}` : `维修+${count}`,
+  });
+}
+
+function applyRoleHit(source, pad) {
+  const now = performance.now();
+  if (now < hitCooldownUntil || !pad) return;
+  hitCooldownUntil = now + HIT_COOLDOWN_MS;
+
+  const corner = CORNERS[pad.cornerIndex % CORNERS.length];
+  const box = cornerNormRect(corner);
+  const spawnAtComplete = pad.maxHp;
+  pad.hp -= 1;
+  combo = villageSummons;
+  pad.hitImpactUntil = now + HIT_POP_MS;
+  pad.hitShakeUntil = now + HIT_SHAKE_MS;
+  damagePops.push({
+    x: box.x + box.w * 0.5,
+    y: box.y + box.h * 0.35,
+    born: now,
+    text: source === "nod" ? "点头!" : source === "slip" ? "躲闪!" : "-1",
+  });
+  if (damagePops.length > 10) damagePops.shift();
+  flashHit();
+
+  if (pad.hp <= 0) {
+    spawnAlliesFromPad(pad);
+    const idx = rolePads.indexOf(pad);
+    const refreshed = makeRolePad(pad.type, pad.cornerIndex);
+    // keep same maxHp meaning for this complete was spawnAtComplete; new pad gets new roll
+    rolePads[idx] = refreshed;
+    celebrateUntil = now + 700;
+    setStatus(
+      `${pad.type === "warrior" ? "战士" : "维修"}就绪！召唤 ${spawnAtComplete} 名`
+    );
+  } else {
+    updateHud();
+    setStatus(
+      `充能${pad.type === "warrior" ? "战士" : "维修"} ${pad.hp}/${pad.maxHp}（打满出 ${pad.maxHp}）`
+    );
+  }
+  updateHud();
+}
+
+function updateVillage(dt, now) {
+  if (villageLost || gameMode !== "village") return;
+
+  if (now >= nextInvaderAt) {
+    const burst = Math.random() < 0.45 ? 2 : 1;
+    for (let i = 0; i < burst; i++) spawnInvader();
+    nextInvaderAt = now + INVADER_SPAWN_MS + randomInt(0, 800);
+  }
+
+  // Invaders move / attack buildings
+  for (const inv of invaders) {
+    let target = buildings.find((b) => b.key === inv.targetKey && b.hp > 0);
+    if (!target) {
+      target = nearestBuilding(inv.x, inv.y);
+      inv.targetKey = target?.key ?? null;
+    }
+    if (!target) continue;
+    const tx = target.x;
+    const ty = Math.max(0.12, target.y - 0.06);
+    const dx = tx - inv.x;
+    const dy = ty - inv.y;
+    const dist = Math.hypot(dx, dy) || 0.0001;
+    if (dist > 0.045) {
+      inv.x += (dx / dist) * INVADER_SPEED * dt;
+      inv.y += (dy / dist) * INVADER_SPEED * dt;
+    } else if (now >= inv.nextAttackAt) {
+      target.hp = Math.max(0, target.hp - INVADER_ATTACK_DMG);
+      inv.nextAttackAt = now + INVADER_ATTACK_MS;
+      damagePops.push({
+        x: target.x,
+        y: target.y - 0.12,
+        born: now,
+        text: `-${INVADER_ATTACK_DMG}`,
+      });
+    }
+  }
+
+  // Allies
+  for (const ally of allies) {
+    if (now - ally.born > ALLY_LIFETIME_MS) continue;
+    if (ally.type === "warrior") {
+      let target = null;
+      let bestD = Infinity;
+      for (const inv of invaders) {
+        if (inv.hp <= 0) continue;
+        const d = Math.hypot(inv.x - ally.x, inv.y - ally.y);
+        if (d < bestD) {
+          bestD = d;
+          target = inv;
+        }
+      }
+      if (!target) continue;
+      if (bestD > 0.04) {
+        ally.x += ((target.x - ally.x) / bestD) * ALLY_SPEED * dt;
+        ally.y += ((target.y - ally.y) / bestD) * ALLY_SPEED * dt;
+      } else if (now >= ally.nextActionAt) {
+        target.hp -= ALLY_ATTACK_DMG;
+        ally.nextActionAt = now + ALLY_ATTACK_MS;
+        if (target.hp <= 0) {
+          villageKills += 1;
+          score = villageKills;
+        }
+      }
+    } else {
+      const target = lowestHpBuilding();
+      if (!target || target.hp >= target.maxHp) continue;
+      const tx = target.x;
+      const ty = Math.max(0.12, target.y - 0.05);
+      const dist = Math.hypot(tx - ally.x, ty - ally.y) || 0.0001;
+      if (dist > 0.04) {
+        ally.x += ((tx - ally.x) / dist) * ALLY_SPEED * dt;
+        ally.y += ((ty - ally.y) / dist) * ALLY_SPEED * dt;
+      } else if (now >= ally.nextActionAt) {
+        const before = target.hp;
+        target.hp = Math.min(target.maxHp, target.hp + ALLY_REPAIR_AMT);
+        if (target.hp > before) villageRepairs += 1;
+        ally.nextActionAt = now + ALLY_REPAIR_MS;
+      }
+    }
+  }
+
+  invaders = invaders.filter((i) => i.hp > 0);
+  allies = allies.filter((a) => now - a.born <= ALLY_LIFETIME_MS);
+
+  if (buildings.length && buildings.every((b) => b.hp <= 0)) {
+    endVillageLose();
+  } else {
+    updateHud();
+  }
+}
+
+function endVillageLose() {
+  if (villageLost) return;
+  villageLost = true;
+  stopLoop();
+  const secs = Math.max(1, Math.round((performance.now() - villageStartedAt) / 1000));
+  if (resultTitle) resultTitle.textContent = "村庄沦陷";
+  if (resultBody) {
+    resultBody.textContent = `坚持 ${secs} 秒\n击退 ${villageKills} · 召唤 ${villageSummons} · 维修 ${villageRepairs}`;
+  }
+  if (resultOverlay) resultOverlay.hidden = false;
+  setStatus("全部建筑被毁。可返回菜单再战。");
+}
+
+function drawUnitSprite(imgKey, x, y, size, cols = 6) {
+  const img = enemyImages.get(imgKey);
+  if (!(img?.complete && img.naturalWidth > 0)) {
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  const fw = img.naturalWidth / cols;
+  const fh = img.naturalHeight;
+  const frame = Math.floor(performance.now() / 90) % cols;
+  ctx.drawImage(img, frame * fw, 0, fw, fh, x - size / 2, y - size / 2, size, size);
+}
+
+function drawBuildingHpBar(bx, by, bw, building) {
+  const barW = Math.min(bw * 0.85, canvas.width * 0.14);
+  const barH = Math.max(8, canvas.height * 0.012);
+  const x = bx + (bw - barW) / 2;
+  const y = by - barH - 6;
+  const ratio = Math.max(0, building.hp / building.maxHp);
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(x - 1, y - 1, barW + 2, barH + 2);
+  ctx.fillStyle = "rgba(255,255,255,0.2)";
+  ctx.fillRect(x, y, barW, barH);
+  ctx.fillStyle = ratio > 0.35 ? "#3ddc97" : "#ff5a5f";
+  ctx.fillRect(x, y, barW * ratio, barH);
+}
+
+function drawRolePad(pad, now, cw, ch) {
+  const corner = CORNERS[pad.cornerIndex % CORNERS.length];
+  const box = cornerNormRect(corner);
+  let rx = box.x * cw;
+  let ry = box.y * ch;
+  const rw = box.w * cw;
+  const rh = box.h * ch;
+  const hitting = now < pad.hitImpactUntil;
+  const shaking = now < pad.hitShakeUntil;
+  if (shaking) {
+    const t = 1 - (pad.hitShakeUntil - now) / HIT_SHAKE_MS;
+    const amp = (1 - t) * Math.max(8, cw * 0.014);
+    rx += Math.sin(now / 18) * amp;
+    ry += Math.cos(now / 15) * amp * 0.7;
+  }
+  const color = pad.type === "warrior" ? "#4cc9f0" : "#ffe566";
+  ctx.save();
+  ctx.globalAlpha = hitting ? 0.5 : 0.3;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(rx, ry, rw, rh, Math.min(24, rw * 0.08));
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = Math.max(3, cw * 0.005);
+  ctx.stroke();
+
+  const label = pad.type === "warrior" ? "战士充能" : "维修充能";
+  ctx.fillStyle = "#081018";
+  ctx.font = `bold ${Math.max(14, Math.floor(cw * 0.028))}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText(label, rx + rw / 2, ry + rh * 0.22);
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${Math.max(16, Math.floor(cw * 0.032))}px sans-serif`;
+  ctx.fillText(`打满出 ${pad.maxHp}`, rx + rw / 2, ry + rh * 0.38);
+
+  // charge bar (remaining hits)
+  const barW = rw * 0.7;
+  const barH = Math.max(12, rh * 0.08);
+  const bx = rx + (rw - barW) / 2;
+  const by = ry + rh * 0.48;
+  const ratio = Math.max(0, pad.hp / pad.maxHp);
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(bx - 2, by - 2, barW + 4, barH + 4);
+  ctx.fillStyle = "rgba(255,255,255,0.2)";
+  ctx.fillRect(bx, by, barW, barH);
+  ctx.fillStyle = color;
+  ctx.fillRect(bx, by, barW * ratio, barH);
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${Math.max(12, Math.floor(barH * 0.9))}px sans-serif`;
+  ctx.fillText(`${pad.hp}/${pad.maxHp}`, rx + rw / 2, by + barH / 2 + 1);
+
+  const artKey = pad.type === "warrior" ? "ally-warrior" : "ally-repair";
+  const artSize = Math.min(rw, rh) * 0.55;
+  const cols = pad.type === "warrior" ? 8 : 6;
+  drawUnitSprite(artKey, rx + rw / 2, ry + rh * 0.78, artSize, cols);
+  ctx.restore();
+}
+
+function drawMenuPreview() {
+  resizeCanvas();
+  const cw = canvas.width;
+  const ch = canvas.height;
+  if (!cw || !ch) return;
+  drawTinySwordsBackground(cw, ch, BG_BUILDINGS);
+}
+
 function currentCorner() {
   return CORNERS[(enemies[0]?.cornerIndex ?? 0) % CORNERS.length];
 }
@@ -359,6 +853,9 @@ function cornerOf(enemy) {
 }
 
 function anyEnemyImpact(now = performance.now()) {
+  if (gameMode === "village") {
+    return rolePads.some((p) => now < p.hitImpactUntil);
+  }
   return enemies.some((e) => now < e.hitImpactUntil);
 }
 
@@ -449,6 +946,24 @@ function cornerNormRect(corner) {
 }
 
 function updateHud() {
+  if (gameMode === "village") {
+    scoreEl.textContent = String(villageKills);
+    comboEl.textContent = String(villageSummons);
+    const totalHp = buildings.reduce((s, b) => s + Math.max(0, b.hp), 0);
+    const totalMax = buildings.reduce((s, b) => s + b.maxHp, 0) || 1;
+    const alive = aliveBuildings().length;
+    hpFill.style.width = `${Math.max(0, (totalHp / totalMax) * 100)}%`;
+    hpText.textContent = `建筑 ${alive}/${buildings.length} · ${totalHp}/${totalMax}`;
+    const w = allies.filter((a) => a.type === "warrior").length;
+    const r = allies.filter((a) => a.type === "repairer").length;
+    if (performance.now() < celebrateUntil) {
+      promptEl.textContent = `友军出击！战士 ${w} · 维修 ${r}`;
+    } else {
+      promptEl.textContent = `充能战士/维修 · 血条=召唤数 · 友军 ${w}/${r}`;
+    }
+    return;
+  }
+
   scoreEl.textContent = String(score);
   comboEl.textContent = String(combo);
 
@@ -469,7 +984,7 @@ function updateHud() {
     promptEl.textContent =
       labels.length > 0 ? `击杀！继续砸 ${labels.join(" + ")}` : "击杀！";
   } else if (labels.length === 0) {
-    promptEl.textContent = "准备开始";
+    promptEl.textContent = gameMode ? "准备开始" : "选择模式";
   } else {
     promptEl.textContent = `砸 ${labels.join(" + ")} · 挥拳 / 甩头`;
   }
@@ -675,8 +1190,25 @@ function smoothWrist(side, nx, ny, angle) {
 
 function checkWristHit(side, dt) {
   const w = wrists[side];
-  if (!w.ready || dt <= 0 || enemies.length === 0) return;
+  if (!w.ready || dt <= 0) return;
 
+  if (gameMode === "village") {
+    if (villageLost || rolePads.length === 0) return;
+    for (const pad of rolePads) {
+      const corner = CORNERS[pad.cornerIndex % CORNERS.length];
+      const wasOutside = !pointInCorner(w.px, w.py, corner);
+      const nowInside = pointInCorner(w.x, w.y, corner);
+      if (!wasOutside || !nowInside) continue;
+      const speed = Math.hypot(w.x - w.px, w.y - w.py) / dt;
+      if (speed >= HIT_SPEED) {
+        applyRoleHit("punch", pad);
+        return;
+      }
+    }
+    return;
+  }
+
+  if (enemies.length === 0) return;
   for (const enemy of enemies) {
     const corner = cornerOf(enemy);
     const wasOutside = !pointInCorner(w.px, w.py, corner);
@@ -706,14 +1238,23 @@ function smoothHead(nx, ny) {
   head.y = head.y * (1 - HEAD_SMOOTH) + ny * HEAD_SMOOTH;
 }
 
-/** Head slip (lateral) / nod (down) / jab into a monster corner. */
+/** Head slip (lateral) / nod (down) / jab into a monster or role pad. */
 function checkHeadHit(dt) {
-  if (!head.ready || dt <= 0 || enemies.length === 0) return;
+  if (!head.ready || dt <= 0) return;
 
-  for (const enemy of enemies) {
-    const corner = cornerOf(enemy);
-    const wasOutside = !pointInCorner(head.px, head.py, corner);
-    const nowInside = pointInCorner(head.x, head.y, corner);
+  const targets =
+    gameMode === "village"
+      ? rolePads.map((pad) => ({
+          pad,
+          corner: CORNERS[pad.cornerIndex % CORNERS.length],
+        }))
+      : enemies.map((enemy) => ({ enemy, corner: cornerOf(enemy) }));
+
+  if (!targets.length || (gameMode === "village" && villageLost)) return;
+
+  for (const t of targets) {
+    const wasOutside = !pointInCorner(head.px, head.py, t.corner);
+    const nowInside = pointInCorner(head.x, head.y, t.corner);
     if (!wasOutside || !nowInside) continue;
 
     const dx = head.x - head.px;
@@ -723,23 +1264,16 @@ function checkHeadHit(dt) {
     const isSlip =
       Math.abs(dx) > 0.01 && Math.abs(dx) >= Math.abs(dy) * 0.65 && speed >= HEAD_SLIP_SPEED;
     const isJab = speed >= HEAD_HIT_SPEED;
-    if (isNod) {
-      applyHit("nod", enemy);
-      return;
-    }
-    if (isSlip) {
-      applyHit("slip", enemy);
-      return;
-    }
-    if (isJab) {
-      applyHit("head", enemy);
-      return;
-    }
+    const source = isNod ? "nod" : isSlip ? "slip" : isJab ? "head" : null;
+    if (!source) continue;
+    if (gameMode === "village") applyRoleHit(source, t.pad);
+    else applyHit(source, t.enemy);
+    return;
   }
 }
 
 /** Cover-draw mirrored video, then overlays in the same mirrored space. */
-function drawTinySwordsBackground(cw, ch) {
+function drawTinySwordsBackground(cw, ch, buildingList = null) {
   const grass = enemyImages.get("bg-grass");
 
   if (grass?.complete && grass.naturalWidth > 0) {
@@ -761,16 +1295,29 @@ function drawTinySwordsBackground(cw, ch) {
     ctx.fillRect(0, 0, cw, ch);
   }
 
+  const list = buildingList || (gameMode === "village" && buildings.length ? buildings : BG_BUILDINGS);
   // Sort by y so lower buildings draw in front.
-  const sorted = [...BG_BUILDINGS].sort((a, b) => a.y - b.y);
+  const sorted = [...list].sort((a, b) => a.y - b.y);
   for (const b of sorted) {
+    if (b.hp != null && b.hp <= 0) {
+      // Ruined tint placeholder
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+    }
     const img = enemyImages.get(b.key);
-    if (!(img?.complete && img.naturalWidth > 0)) continue;
+    if (!(img?.complete && img.naturalWidth > 0)) {
+      if (b.hp != null && b.hp <= 0) ctx.restore();
+      continue;
+    }
     const drawH = ch * b.h;
     const drawW = (img.naturalWidth / img.naturalHeight) * drawH;
     const x = b.x * cw - drawW / 2;
     const y = b.y * ch - drawH;
     ctx.drawImage(img, x, y, drawW, drawH);
+    if (b.hp != null && b.hp <= 0) ctx.restore();
+    else if (b.hp != null && b.maxHp != null && b.hp > 0) {
+      drawBuildingHpBar(x, y, drawW, b);
+    }
   }
 }
 
@@ -798,8 +1345,36 @@ function drawScene(mirroredLandmarks) {
   }
 
   const now = performance.now();
-  for (const enemy of enemies) {
-    drawOneEnemy(enemy, now, cw, ch);
+
+  if (gameMode === "village") {
+    for (const pad of rolePads) drawRolePad(pad, now, cw, ch);
+    for (const inv of invaders) {
+      const size = Math.max(36, cw * 0.055);
+      drawUnitSprite("invader-run", inv.x * cw, inv.y * ch, size, 6);
+      // tiny hp
+      const bw = size * 0.8;
+      const bh = 6;
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(inv.x * cw - bw / 2, inv.y * ch - size * 0.55, bw, bh);
+      ctx.fillStyle = "#ff5a5f";
+      ctx.fillRect(
+        inv.x * cw - bw / 2,
+        inv.y * ch - size * 0.55,
+        bw * Math.max(0, inv.hp / inv.maxHp),
+        bh
+      );
+    }
+    for (const ally of allies) {
+      const size = Math.max(32, cw * 0.048);
+      const key =
+        ally.type === "warrior" ? "ally-warrior-run" : "ally-repair-run";
+      const cols = ally.type === "warrior" ? 6 : 4;
+      drawUnitSprite(key, ally.x * cw, ally.y * ch, size, cols);
+    }
+  } else {
+    for (const enemy of enemies) {
+      drawOneEnemy(enemy, now, cw, ch);
+    }
   }
 
   drawDamagePops(now, cw, ch);
@@ -1531,6 +2106,10 @@ function loop() {
   const dt = lastTs ? (now - lastTs) / 1000 : 0.016;
   lastTs = now;
 
+  if (gameMode === "village" && !villageLost) {
+    updateVillage(dt, now);
+  }
+
   if (video.currentTime === lastVideoTime) {
     drawScene(null);
     return;
@@ -1541,7 +2120,7 @@ function loop() {
   const raw = result.landmarks?.[0] ?? null;
   let mirrored = null;
 
-  if (raw) {
+  if (raw && gameMode) {
     mirrored = raw.map((lm) => {
       const n = toCanvasNorm(lm);
       return { x: n.x, y: n.y, visibility: n.visibility };
@@ -1585,6 +2164,15 @@ function loop() {
 }
 
 async function toggle() {
+  if (!gameMode) {
+    setStatus("请先在菜单选择「砸怪健身」或「守村保卫」");
+    return;
+  }
+  if (villageLost && gameMode === "village") {
+    setStatus("本局已结束，请返回菜单再开一局");
+    return;
+  }
+
   if (running) {
     stopLoop();
     setStatus("已暂停。再点开始继续。");
@@ -1598,10 +2186,12 @@ async function toggle() {
     punchSfx.currentTime = 0;
     const unlock = punchSfx.play();
     if (unlock) {
-      void unlock.then(() => {
-        punchSfx.pause();
-        punchSfx.currentTime = 0;
-      }).catch(() => {});
+      void unlock
+        .then(() => {
+          punchSfx.pause();
+          punchSfx.currentTime = 0;
+        })
+        .catch(() => {});
     }
   } catch {
     /* ignore */
@@ -1614,7 +2204,13 @@ async function toggle() {
 
     score = 0;
     combo = 0;
-    resetEnemies();
+    if (gameMode === "smash") {
+      resetEnemies();
+      setStatus("随机 1～2 只怪，砸向任一角落！");
+    } else {
+      resetVillage();
+      setStatus("给左上战士 / 右上维修充能，打满按血条召唤友军！");
+    }
     wrists.left.ready = false;
     wrists.right.ready = false;
     head.ready = false;
@@ -1624,7 +2220,6 @@ async function toggle() {
     running = true;
     startBtn.textContent = "暂停";
     startBtn.classList.add("playing");
-    setStatus("随机 1～2 只怪，砸向任一角落！");
     loop();
     await musicPromise;
   } catch (err) {
@@ -1639,6 +2234,10 @@ async function toggle() {
 startBtn.addEventListener("click", toggle);
 cameraBtn.addEventListener("click", toggleCamera);
 bgBtn.addEventListener("click", toggleCameraBg);
+modeSmashBtn?.addEventListener("click", () => enterMode("smash"));
+modeVillageBtn?.addEventListener("click", () => enterMode("village"));
+menuBtn?.addEventListener("click", () => showMenu());
+resultMenuBtn?.addEventListener("click", () => showMenu());
 playlistToggle.addEventListener("click", (e) => {
   e.stopPropagation();
   togglePlaylistPop();
@@ -1683,13 +2282,15 @@ document.addEventListener("keydown", (e) => {
 });
 window.addEventListener("resize", () => {
   resizeCanvas();
-  if (!isCameraOn()) drawCameraOffPlaceholder();
+  if (appEl?.classList.contains("menu-open")) drawMenuPreview();
+  else if (!isCameraOn()) drawCameraOffPlaceholder();
+  else if (!running) drawScene(null);
 });
 updateCameraButton();
 updateBgButton();
 syncPlaylistInput();
 syncPlayModeButton();
 preloadEnemyImages();
-setStatus("可先「打开摄像头」，或直接点「开始运动」");
+showMenu();
 // Warm up YouTube embed so「开始运动」更容易一次点播。
 void ensureYtPlayer().catch((err) => console.warn(err));

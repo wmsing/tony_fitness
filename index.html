@@ -3,14 +3,32 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>健身拳击 — 砸角落怪物</title>
+  <title>Tony Fitness — 健身拳击</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="app">
+  <div id="app" class="menu-open">
+    <section id="mode-menu" class="mode-menu" aria-label="选择模式">
+      <div class="mode-menu-inner">
+        <p class="mode-brand">Tony Fitness</p>
+        <h1 class="mode-title">健身拳击</h1>
+        <p class="mode-sub">挥拳动起来，选一个玩法开练</p>
+        <div class="mode-actions">
+          <button id="mode-smash" type="button" class="mode-card">
+            <span class="mode-card-title">砸怪健身</span>
+            <span class="mode-card-desc">朝角落挥拳 / 甩头砸怪，活动手臂与颈部</span>
+          </button>
+          <button id="mode-village" type="button" class="mode-card">
+            <span class="mode-card-title">守村保卫</span>
+            <span class="mode-card-desc">给战士 / 维修充能召唤友军，保护村庄建筑</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <header class="hud">
       <div class="hud-block">
-        <span class="label">分数</span>
+        <span class="label" id="score-label">分数</span>
         <span id="score">0</span>
       </div>
       <div class="hud-block wide">
@@ -19,7 +37,7 @@
         <span id="hp-text">—</span>
       </div>
       <div class="hud-block">
-        <span class="label">连击</span>
+        <span class="label" id="combo-label">连击</span>
         <span id="combo">0</span>
       </div>
     </header>
@@ -45,6 +63,7 @@
     </div>
 
     <div class="playlist-menu" id="playlist-menu">
+      <button id="menu-btn" type="button" class="secondary">菜单</button>
       <button id="playlist-toggle" type="button" class="secondary" aria-expanded="false" aria-controls="playlist-pop">
         播放列表
       </button>
@@ -65,8 +84,16 @@
       </div>
     </div>
 
+    <div id="result-overlay" class="result-overlay" hidden>
+      <div class="result-card">
+        <h2 id="result-title">村庄沦陷</h2>
+        <p id="result-body"></p>
+        <button id="result-menu-btn" type="button">返回菜单</button>
+      </div>
+    </div>
+
     <footer class="controls">
-      <p id="status">点击开始，允许摄像头权限</p>
+      <p id="status">选择模式后开始运动</p>
       <div class="btn-row">
         <button id="camera-btn" type="button" class="secondary">打开摄像头</button>
         <button id="bg-btn" type="button" class="secondary">地图背景</button>

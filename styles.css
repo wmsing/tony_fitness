@@ -346,6 +346,160 @@ body {
   gap: 8px;
 }
 
+#app.menu-open .hud,
+#app.menu-open .yt-dock,
+#app.menu-open .playlist-menu,
+#app.menu-open .controls {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.mode-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(8, 16, 28, 0.72), rgba(8, 16, 28, 0.88)),
+    url("assets/enemy/tiny-swords/bg-grass-tile.png") repeat;
+  background-size: auto, 64px 64px;
+  image-rendering: pixelated;
+}
+
+#app.menu-open .mode-menu {
+  display: flex;
+}
+
+.mode-menu-inner {
+  width: min(520px, 100%);
+  text-align: center;
+}
+
+.mode-brand {
+  margin: 0 0 6px;
+  font-size: clamp(2rem, 8vw, 3.2rem);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #ffe566;
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+.mode-title {
+  margin: 0 0 8px;
+  font-size: clamp(1.2rem, 4vw, 1.6rem);
+  font-weight: 700;
+}
+
+.mode-sub {
+  margin: 0 0 22px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.mode-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.mode-card {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 16px;
+  padding: 18px 16px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(12, 18, 32, 0.72);
+  backdrop-filter: blur(8px);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.mode-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(76, 201, 240, 0.7);
+}
+
+.mode-card-title {
+  display: block;
+  font-size: 1.2rem;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.mode-card-desc {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+#menu-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(12, 18, 32, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+.result-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(4, 8, 16, 0.62);
+  backdrop-filter: blur(6px);
+}
+
+.result-overlay[hidden] {
+  display: none;
+}
+
+.result-card {
+  width: min(360px, 100%);
+  padding: 22px 18px;
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(12, 18, 32, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.result-card h2 {
+  margin: 0 0 10px;
+  font-size: 1.4rem;
+}
+
+.result-card p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+#result-menu-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 22px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: #081018;
+  background: var(--ok);
+}
+
 #playlist-toggle {
   appearance: none;
   border: 0;
