@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    html, body { margin: 0; background: transparent; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+
+const params = new URLSearchParams(location.search);
+const fbxUrl = params.get("fbx");
+const size = Number(params.get("size") || 768);
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  alpha: true,
+  preserveDrawingBuffer: true,
+});
+renderer.setPixelRatio(1);
+renderer.setSize(size, size);
+renderer.setClearColor(0xff00ff, 1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 2000);
+camera.position.set(0, 1.1, 4.2);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const key = new THREE.DirectionalLight(0xffffff, 1.35);
+key.position.set(2.5, 4, 3);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x88aaff, 0.55);
+fill.position.set(-3, 1.5, -2);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xff66aa, 0.4);
+rim.position.set(0, 2, -4);
+scene.add(rim);
+
+function frameObject(root) {
+  const box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  const bsize = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(bsize.x, bsize.y, bsize.z) || 1;
+  root.position.sub(center);
+  root.position.y += bsize.y * 0.02;
+  camera.position.set(0, bsize.y * 0.15, maxDim * 2.35);
+  camera.lookAt(0, bsize.y * 0.05, 0);
+  camera.updateProjectionMatrix();
+}
+
+window.__renderDone = false;
+window.__png = null;
+window.__error = null;
+
+try {
+  const loader = new FBXLoader();
+  const obj = await loader.loadAsync(fbxUrl);
+  obj.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = false;
+      child.receiveShadow = false;
+      if (child.material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        for (const m of mats) {
+          if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+          m.side = THREE.DoubleSide;
+          m.needsUpdate = true;
+        }
+      }
+    }
+  });
+  scene.add(obj);
+  frameObject(obj);
+  renderer.render(scene, camera);
+  // second pass after layout
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  frameObject(obj);
+  renderer.render(scene, camera);
+  window.__png = renderer.domElement.toDataURL("image/png");
+  window.__renderDone = true;
+} catch (err) {
+  console.error(err);
+  window.__error = String(err?.message || err);
+  window.__renderDone = true;
+}
+</script>
+</body>
+</html>

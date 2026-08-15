@@ -1,0 +1,25 @@
+{
+  "name": "tony_fitness",
+  "version": "1.0.0",
+  "description": "对着摄像头挥拳砸角落怪物，活动手臂，顺便找点乐子。",
+  "main": "app.js",
+  "scripts": {
+    "render-enemies": "node scripts/render-enemies.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wmsing/tony_fitness.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wmsing/tony_fitness/issues"
+  },
+  "homepage": "https://github.com/wmsing/tony_fitness#readme",
+  "dependencies": {
+    "puppeteer": "^25.7.0",
+    "sharp": "^0.35.3",
+    "three": "^0.185.1"
+  }
+}

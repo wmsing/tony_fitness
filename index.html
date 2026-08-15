@@ -28,15 +28,37 @@
       <video id="video" playsinline autoplay muted></video>
       <canvas id="canvas"></canvas>
       <div id="flash"></div>
-      <div class="yt-dock" aria-label="运动播放列表">
-        <div id="yt-player"></div>
-      </div>
     </main>
+    <div class="yt-dock" aria-label="运动播放列表">
+      <div id="yt-player"></div>
+    </div>
+
+    <div class="playlist-menu" id="playlist-menu">
+      <button id="playlist-toggle" type="button" class="secondary" aria-expanded="false" aria-controls="playlist-pop">
+        播放列表
+      </button>
+      <div id="playlist-pop" class="playlist-pop" hidden role="dialog" aria-label="更换 YouTube 播放列表">
+        <label class="playlist-label" for="playlist-input">粘贴链接或 ID</label>
+        <input
+          id="playlist-input"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="YouTube 播放列表链接或 ID"
+        />
+        <div class="playlist-pop-actions">
+          <button id="playlist-cancel" type="button" class="secondary">取消</button>
+          <button id="playlist-btn" type="button">更换</button>
+        </div>
+      </div>
+    </div>
 
     <footer class="controls">
       <p id="status">点击开始，允许摄像头权限</p>
       <div class="btn-row">
         <button id="camera-btn" type="button" class="secondary">打开摄像头</button>
+        <button id="bg-btn" type="button" class="secondary">地图背景</button>
         <button id="start-btn" type="button">开始运动</button>
       </div>
     </footer>
