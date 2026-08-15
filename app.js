@@ -181,7 +181,6 @@ const HEAD_SLIP_SPEED = 0.3;
 const HIT_COOLDOWN_MS = 280;
 const SMOOTH = 0.45;
 const HEAD_SMOOTH = 0.4;
-const BASE_HITS = 10;
 const HIT_FLASH_MS = 220;
 const HIT_SHAKE_MS = 280;
 const HIT_POP_MS = 320;
@@ -243,18 +242,109 @@ const BG_BUILDINGS = [
 
 const ROLE_CHARGE_MIN = 4;
 const ROLE_CHARGE_MAX = 8;
-const MAX_INVADERS = 8;
-const INVADER_SPAWN_MS = 2600;
-const INVADER_SPEED = 0.045;
-const INVADER_HP = 8;
 const INVADER_ATTACK_MS = 1200;
-const INVADER_ATTACK_DMG = 2;
 const ALLY_SPEED = 0.055;
 const ALLY_ATTACK_MS = 700;
 const ALLY_ATTACK_DMG = 2;
 const ALLY_REPAIR_MS = 800;
 const ALLY_REPAIR_AMT = 3;
 const ALLY_LIFETIME_MS = 16000;
+const DIFFICULTY_STORAGE_KEY = "tony_fitness_difficulty";
+
+/** @typedef {'easy' | 'normal' | 'hard' | 'insane'} DifficultyId */
+
+const DIFFICULTY_PRESETS = {
+  easy: {
+    label: "简单",
+    desc: "敌兵较少较慢，砸怪血量更低，适合热身入门。",
+    maxInvaders: 8,
+    spawnMs: 2400,
+    speed: 0.04,
+    invaderHp: 6,
+    attackDmg: 1,
+    startCap: 3,
+    rampSec: 30,
+    smashHits: 6,
+    smashMin: 1,
+    smashMax: 2,
+    burstHot: 0.35,
+  },
+  normal: {
+    label: "普通",
+    desc: "敌兵密度与砸怪血量适中，适合日常锻炼。",
+    maxInvaders: 14,
+    spawnMs: 1500,
+    speed: 0.055,
+    invaderHp: 8,
+    attackDmg: 2,
+    startCap: 6,
+    rampSec: 20,
+    smashHits: 10,
+    smashMin: 1,
+    smashMax: 2,
+    burstHot: 0.55,
+  },
+  hard: {
+    label: "困难",
+    desc: "敌兵更多更快，砸怪更耐打，需要更频繁挥拳。",
+    maxInvaders: 18,
+    spawnMs: 1100,
+    speed: 0.065,
+    invaderHp: 10,
+    attackDmg: 2,
+    startCap: 8,
+    rampSec: 15,
+    smashHits: 14,
+    smashMin: 1,
+    smashMax: 3,
+    burstHot: 0.7,
+  },
+  insane: {
+    label: "地狱",
+    desc: "几乎不停刷怪，拆房更快，适合高强度冲刺。",
+    maxInvaders: 24,
+    spawnMs: 800,
+    speed: 0.078,
+    invaderHp: 12,
+    attackDmg: 3,
+    startCap: 10,
+    rampSec: 12,
+    smashHits: 18,
+    smashMin: 2,
+    smashMax: 3,
+    burstHot: 0.85,
+  },
+};
+
+/** @returns {DifficultyId} */
+function loadSavedDifficulty() {
+  try {
+    const saved = localStorage.getItem(DIFFICULTY_STORAGE_KEY);
+    if (saved && DIFFICULTY_PRESETS[saved]) return /** @type {DifficultyId} */ (saved);
+  } catch {
+    /* ignore */
+  }
+  return "normal";
+}
+
+/** @type {DifficultyId} */
+let difficulty = loadSavedDifficulty();
+
+function diffCfg() {
+  return DIFFICULTY_PRESETS[difficulty] || DIFFICULTY_PRESETS.normal;
+}
+const HIT_COMBO_TIMEOUT_MS = 2200;
+const TITLE_TOAST_MS = 1000;
+const COMBO_TITLE_TIERS = [
+  { at: 10, text: "铁拳" },
+  { at: 20, text: "风暴" },
+  { at: 50, text: "传说" },
+];
+const EVENT_FIRST_DELAY_MS = 12000;
+const EVENT_COOLDOWN_MIN_MS = 18000;
+const EVENT_COOLDOWN_MAX_MS = 28000;
+const EVENT_DURATION_MS = 8000;
+const EVENT_REPAIR_BONUS_RATIO = 0.12;
 
 /** Punch impact VFX from Tiny Swords Particle FX. */
 const HIT_FX = [
@@ -351,6 +441,10 @@ const appEl = document.getElementById("app");
 const modeMenu = document.getElementById("mode-menu");
 const modeSmashBtn = document.getElementById("mode-smash");
 const modeVillageBtn = document.getElementById("mode-village");
+const modeSettingsBtn = document.getElementById("mode-settings");
+const settingsPanel = document.getElementById("settings-panel");
+const settingsBackBtn = document.getElementById("settings-back");
+const difficultyDesc = document.getElementById("difficulty-desc");
 const menuBtn = document.getElementById("menu-btn");
 const resultOverlay = document.getElementById("result-overlay");
 const resultTitle = document.getElementById("result-title");
@@ -377,9 +471,6 @@ let showCameraBg = false;
 /** @type {null | 'smash' | 'village'} */
 let gameMode = null;
 let villageLost = false;
-
-const MIN_ACTIVE_ENEMIES = 1;
-const MAX_ACTIVE_ENEMIES = 2;
 
 let score = 0;
 let combo = 0;
@@ -414,6 +505,18 @@ let villageStartedAt = 0;
 let villageKills = 0;
 let villageSummons = 0;
 let villageRepairs = 0;
+/** Village punch combo for titles (HUD still shows summons). */
+let hitCombo = 0;
+let hitComboLastAt = 0;
+let lastTitleTier = 0;
+/** @type {null | { text: string, born: number, until: number }} */
+let titleToast = null;
+let nextEventAt = 0;
+let invaderIdSeq = 1;
+/**
+ * @type {null | { type: 'repair' | 'warrior', until: number, buildingKey?: string, eliteId?: number }}
+ */
+let activeEvent = null;
 
 const wrists = {
   left: { x: 0.5, y: 0.5, px: 0.5, py: 0.5, angle: -Math.PI / 2, ready: false },
@@ -431,15 +534,142 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+function resetComboTitleState() {
+  hitCombo = 0;
+  hitComboLastAt = 0;
+  lastTitleTier = 0;
+  titleToast = null;
+}
+
+function maybeShowComboTitle(count) {
+  let unlocked = null;
+  for (const tier of COMBO_TITLE_TIERS) {
+    if (count >= tier.at && lastTitleTier < tier.at) {
+      unlocked = tier;
+    }
+  }
+  if (!unlocked) return;
+  lastTitleTier = unlocked.at;
+  const now = performance.now();
+  titleToast = {
+    text: unlocked.text,
+    born: now,
+    until: now + TITLE_TOAST_MS,
+  };
+  setStatus(`连击 ${unlocked.at}！${unlocked.text}`);
+}
+
+function registerHitCombo() {
+  const now = performance.now();
+  if (now - hitComboLastAt > HIT_COMBO_TIMEOUT_MS) {
+    hitCombo = 0;
+    lastTitleTier = 0;
+  }
+  hitCombo += 1;
+  hitComboLastAt = now;
+  maybeShowComboTitle(hitCombo);
+}
+
+function tickHitComboTimeout(now = performance.now()) {
+  if (hitCombo > 0 && now - hitComboLastAt > HIT_COMBO_TIMEOUT_MS) {
+    hitCombo = 0;
+    lastTitleTier = 0;
+  }
+}
+
+function drawTitleToast(now, cw, ch) {
+  if (!titleToast || now > titleToast.until) {
+    if (titleToast && now > titleToast.until) titleToast = null;
+    return;
+  }
+  const t = (now - titleToast.born) / TITLE_TOAST_MS;
+  const alpha = t < 0.15 ? t / 0.15 : t > 0.7 ? (1 - t) / 0.3 : 1;
+  const scale = 0.85 + Math.min(1, t * 2.2) * 0.35;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.translate(cw / 2, ch * 0.28);
+  ctx.scale(scale, scale);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = Math.max(6, cw * 0.01);
+  ctx.strokeStyle = "rgba(8,16,28,0.85)";
+  ctx.fillStyle = "#ffe566";
+  const size = Math.max(42, Math.floor(cw * 0.09));
+  ctx.font = `bold ${size}px sans-serif`;
+  ctx.strokeText(titleToast.text, 0, 0);
+  ctx.fillText(titleToast.text, 0, 0);
+  ctx.restore();
+}
+
+function drawEventBanner(now, cw, ch) {
+  if (!activeEvent || now > activeEvent.until) return;
+  const label =
+    activeEvent.type === "repair" ? "⚡ 快修！危楼冒烟" : "⚡ 快充战士！精英冲锋";
+  ctx.save();
+  ctx.globalAlpha = 0.92;
+  const w = Math.min(cw * 0.72, 420);
+  const h = Math.max(34, ch * 0.045);
+  const x = (cw - w) / 2;
+  const y = ch * 0.12;
+  ctx.fillStyle =
+    activeEvent.type === "repair"
+      ? "rgba(255, 140, 40, 0.88)"
+      : "rgba(255, 70, 90, 0.88)";
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 10);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${Math.max(14, Math.floor(h * 0.48))}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, cw / 2, y + h / 2);
+  ctx.restore();
+}
+
 function showMenu() {
   stopLoop();
   gameMode = null;
   villageLost = false;
   if (resultOverlay) resultOverlay.hidden = true;
+  hideSettings();
   appEl?.classList.add("menu-open");
   setStatus("选择模式后开始运动");
   resizeCanvas();
   drawMenuPreview();
+}
+
+function showSettings() {
+  stopLoop();
+  appEl?.classList.remove("menu-open");
+  appEl?.classList.add("settings-open");
+  if (settingsPanel) settingsPanel.hidden = false;
+  syncDifficultyUI();
+  setStatus("调节难度后返回菜单");
+}
+
+function hideSettings() {
+  appEl?.classList.remove("settings-open");
+  if (settingsPanel) settingsPanel.hidden = true;
+}
+
+function setDifficulty(id) {
+  if (!DIFFICULTY_PRESETS[id]) return;
+  difficulty = /** @type {DifficultyId} */ (id);
+  try {
+    localStorage.setItem(DIFFICULTY_STORAGE_KEY, difficulty);
+  } catch {
+    /* ignore */
+  }
+  syncDifficultyUI();
+  setStatus(`难度：${diffCfg().label}`);
+}
+
+function syncDifficultyUI() {
+  const cfg = diffCfg();
+  document.querySelectorAll(".diff-btn").forEach((btn) => {
+    btn.classList.toggle("on", btn.getAttribute("data-diff") === difficulty);
+  });
+  if (difficultyDesc) difficultyDesc.textContent = cfg.desc;
 }
 
 function enterMode(mode) {
@@ -449,6 +679,7 @@ function enterMode(mode) {
   appEl?.classList.remove("menu-open");
   score = 0;
   combo = 0;
+  resetComboTitleState();
   enemies = [];
   rolePads = [];
   allies = [];
@@ -456,6 +687,8 @@ function enterMode(mode) {
   buildings = [];
   damagePops = [];
   hitFx = [];
+  activeEvent = null;
+  nextEventAt = 0;
   if (mode === "smash") {
     if (scoreLabel) scoreLabel.textContent = "分数";
     if (comboLabel) comboLabel.textContent = "连击";
@@ -508,12 +741,16 @@ function resetVillage() {
   ];
   allies = [];
   invaders = [];
-  nextInvaderAt = performance.now() + 1200;
+  nextInvaderAt = performance.now() + 600;
   villageStartedAt = performance.now();
   villageKills = 0;
   villageSummons = 0;
   villageRepairs = 0;
   villageLost = false;
+  resetComboTitleState();
+  activeEvent = null;
+  nextEventAt = performance.now() + EVENT_FIRST_DELAY_MS;
+  invaderIdSeq = 1;
   updateHud();
 }
 
@@ -543,13 +780,19 @@ function lowestHpBuilding() {
 }
 
 function currentInvaderCap() {
+  const cfg = diffCfg();
   const elapsed = (performance.now() - villageStartedAt) / 1000;
-  // Ramp: 4 → 8 over a few minutes so early game isn't empty, late game is denser.
-  return Math.min(MAX_INVADERS, 4 + Math.floor(elapsed / 45));
+  return Math.min(
+    cfg.maxInvaders,
+    cfg.startCap + Math.floor(elapsed / cfg.rampSec)
+  );
 }
 
-function spawnInvader() {
-  if (invaders.length >= currentInvaderCap() || !aliveBuildings().length) return;
+function spawnInvader(opts = {}) {
+  const elite = Boolean(opts.elite);
+  const cfg = diffCfg();
+  if (!elite && invaders.length >= currentInvaderCap()) return null;
+  if (!aliveBuildings().length) return null;
   const edge = randomInt(0, 3);
   let x = 0.5;
   let y = 0.5;
@@ -567,14 +810,83 @@ function spawnInvader() {
     y = 0.15 + Math.random() * 0.7;
   }
   const target = nearestBuilding(x, y);
-  invaders.push({
+  const baseHp = cfg.invaderHp;
+  const hp = elite ? Math.round(baseHp * 2.5) : baseHp;
+  const inv = {
+    id: invaderIdSeq++,
     x,
     y,
-    hp: INVADER_HP,
-    maxHp: INVADER_HP,
+    hp,
+    maxHp: hp,
     targetKey: target?.key ?? null,
     nextAttackAt: 0,
-  });
+    elite,
+    speed: elite ? cfg.speed * 1.35 : cfg.speed,
+    attackDmg: elite ? cfg.attackDmg + 1 : cfg.attackDmg,
+  };
+  invaders.push(inv);
+  return inv;
+}
+
+function clearActiveEvent(message) {
+  activeEvent = null;
+  nextEventAt =
+    performance.now() +
+    randomInt(EVENT_COOLDOWN_MIN_MS, EVENT_COOLDOWN_MAX_MS);
+  if (message) setStatus(message);
+}
+
+function resolveRepairEvent(building, reason = "危机解除") {
+  if (!activeEvent || activeEvent.type !== "repair") return;
+  if (building && building.hp > 0) {
+    const bonus = Math.max(8, Math.round(building.maxHp * EVENT_REPAIR_BONUS_RATIO));
+    building.hp = Math.min(building.maxHp, building.hp + bonus);
+    damagePops.push({
+      x: building.x,
+      y: building.y - 0.14,
+      born: performance.now(),
+      text: reason,
+    });
+  }
+  clearActiveEvent("快修成功！建筑加固");
+}
+
+function tryStartVillageEvent(now) {
+  if (activeEvent || now < nextEventAt) return;
+  if (now - villageStartedAt < EVENT_FIRST_DELAY_MS) return;
+
+  const damaged = aliveBuildings().filter((b) => b.hp / b.maxHp < 0.55);
+  let type = "warrior";
+  if (damaged.length > 0 && Math.random() < 0.65) type = "repair";
+  else if (damaged.length > 0 && Math.random() < 0.5) type = "repair";
+
+  if (type === "repair") {
+    if (!damaged.length) {
+      nextEventAt = now + 4000;
+      return;
+    }
+    const building = damaged.reduce((a, b) =>
+      a.hp / a.maxHp <= b.hp / b.maxHp ? a : b
+    );
+    activeEvent = {
+      type: "repair",
+      until: now + EVENT_DURATION_MS,
+      buildingKey: building.key,
+    };
+    setStatus("危楼冒烟！快充「维修」或派维修兵！");
+  } else {
+    const elite = spawnInvader({ elite: true });
+    if (!elite) {
+      nextEventAt = now + 4000;
+      return;
+    }
+    activeEvent = {
+      type: "warrior",
+      until: now + EVENT_DURATION_MS + 4000,
+      eliteId: elite.id,
+    };
+    setStatus("精英冲锋！快充「战士」拦下它！");
+  }
 }
 
 function spawnAlliesFromPad(pad) {
@@ -595,13 +907,21 @@ function spawnAlliesFromPad(pad) {
   }
   villageSummons += count;
   score = villageKills;
-  combo = villageSummons;
   damagePops.push({
     x: cx,
     y: box.y + box.h * 0.25,
     born: now,
     text: pad.type === "warrior" ? `战士+${count}` : `维修+${count}`,
   });
+
+  if (
+    pad.type === "repairer" &&
+    activeEvent?.type === "repair" &&
+    activeEvent.buildingKey
+  ) {
+    const b = buildings.find((x) => x.key === activeEvent.buildingKey);
+    if (b && b.hp > 0) resolveRepairEvent(b);
+  }
 }
 
 function applyRoleHit(source, pad) {
@@ -613,7 +933,7 @@ function applyRoleHit(source, pad) {
   const box = cornerNormRect(corner);
   const spawnAtComplete = pad.maxHp;
   pad.hp -= 1;
-  combo = villageSummons;
+  registerHitCombo();
   pad.hitImpactUntil = now + HIT_POP_MS;
   pad.hitShakeUntil = now + HIT_SHAKE_MS;
   damagePops.push({
@@ -629,16 +949,15 @@ function applyRoleHit(source, pad) {
     spawnAlliesFromPad(pad);
     const idx = rolePads.indexOf(pad);
     const refreshed = makeRolePad(pad.type, pad.cornerIndex);
-    // keep same maxHp meaning for this complete was spawnAtComplete; new pad gets new roll
     rolePads[idx] = refreshed;
     celebrateUntil = now + 700;
     setStatus(
-      `${pad.type === "warrior" ? "战士" : "维修"}就绪！召唤 ${spawnAtComplete} 名`
+      `${pad.type === "warrior" ? "战士" : "维修"}就绪！召唤 ${spawnAtComplete} 名 · 连击 ${hitCombo}`
     );
   } else {
     updateHud();
     setStatus(
-      `充能${pad.type === "warrior" ? "战士" : "维修"} ${pad.hp}/${pad.maxHp}（打满出 ${pad.maxHp}）`
+      `充能${pad.type === "warrior" ? "战士" : "维修"} ${pad.hp}/${pad.maxHp}（打满出 ${pad.maxHp}）· 连击 ${hitCombo}`
     );
   }
   updateHud();
@@ -647,10 +966,28 @@ function applyRoleHit(source, pad) {
 function updateVillage(dt, now) {
   if (villageLost || gameMode !== "village") return;
 
+  tickHitComboTimeout(now);
+  tryStartVillageEvent(now);
+
+  if (activeEvent && now > activeEvent.until) {
+    if (activeEvent.type === "repair") {
+      clearActiveEvent("快修超时，继续守村");
+    } else {
+      // Elite may still be alive after banner timeout — keep hunting until dead
+      const eliteAlive = invaders.some(
+        (i) => i.elite && i.id === activeEvent.eliteId && i.hp > 0
+      );
+      if (!eliteAlive) clearActiveEvent(null);
+      else activeEvent.until = now + 5000;
+    }
+  }
+
   if (now >= nextInvaderAt) {
-    const burst = Math.random() < 0.45 ? 2 : 1;
+    const cfg = diffCfg();
+    const roll = Math.random();
+    const burst = roll < cfg.burstHot * 0.35 ? 3 : roll < cfg.burstHot ? 2 : 1;
     for (let i = 0; i < burst; i++) spawnInvader();
-    nextInvaderAt = now + INVADER_SPAWN_MS + randomInt(0, 800);
+    nextInvaderAt = now + cfg.spawnMs + randomInt(0, Math.floor(cfg.spawnMs * 0.35));
   }
 
   // Invaders move / attack buildings
@@ -666,17 +1003,19 @@ function updateVillage(dt, now) {
     const dx = tx - inv.x;
     const dy = ty - inv.y;
     const dist = Math.hypot(dx, dy) || 0.0001;
+    const speed = inv.speed || diffCfg().speed;
+    const dmg = inv.attackDmg || diffCfg().attackDmg;
     if (dist > 0.045) {
-      inv.x += (dx / dist) * INVADER_SPEED * dt;
-      inv.y += (dy / dist) * INVADER_SPEED * dt;
+      inv.x += (dx / dist) * speed * dt;
+      inv.y += (dy / dist) * speed * dt;
     } else if (now >= inv.nextAttackAt) {
-      target.hp = Math.max(0, target.hp - INVADER_ATTACK_DMG);
+      target.hp = Math.max(0, target.hp - dmg);
       inv.nextAttackAt = now + INVADER_ATTACK_MS;
       damagePops.push({
         x: target.x,
         y: target.y - 0.12,
         born: now,
-        text: `-${INVADER_ATTACK_DMG}`,
+        text: `-${dmg}`,
       });
     }
   }
@@ -689,9 +1028,14 @@ function updateVillage(dt, now) {
       let bestD = Infinity;
       for (const inv of invaders) {
         if (inv.hp <= 0) continue;
-        const d = Math.hypot(inv.x - ally.x, inv.y - ally.y);
+        // Prefer elite during warrior event
+        const bias =
+          activeEvent?.type === "warrior" && inv.id === activeEvent.eliteId
+            ? -0.15
+            : 0;
+        const d = Math.hypot(inv.x - ally.x, inv.y - ally.y) + bias;
         if (d < bestD) {
-          bestD = d;
+          bestD = Math.hypot(inv.x - ally.x, inv.y - ally.y);
           target = inv;
         }
       }
@@ -703,12 +1047,35 @@ function updateVillage(dt, now) {
         target.hp -= ALLY_ATTACK_DMG;
         ally.nextActionAt = now + ALLY_ATTACK_MS;
         if (target.hp <= 0) {
-          villageKills += 1;
+          const wasElite = target.elite;
+          villageKills += wasElite ? 3 : 1;
           score = villageKills;
+          if (
+            wasElite &&
+            activeEvent?.type === "warrior" &&
+            activeEvent.eliteId === target.id
+          ) {
+            damagePops.push({
+              x: target.x,
+              y: target.y - 0.05,
+              born: now,
+              text: "击退精英",
+            });
+            clearActiveEvent("击退精英！干得漂亮");
+          }
         }
       }
     } else {
-      const target = lowestHpBuilding();
+      let target = lowestHpBuilding();
+      if (
+        activeEvent?.type === "repair" &&
+        activeEvent.buildingKey
+      ) {
+        const urgent = buildings.find(
+          (b) => b.key === activeEvent.buildingKey && b.hp > 0
+        );
+        if (urgent) target = urgent;
+      }
       if (!target || target.hp >= target.maxHp) continue;
       const tx = target.x;
       const ty = Math.max(0.12, target.y - 0.05);
@@ -721,12 +1088,27 @@ function updateVillage(dt, now) {
         target.hp = Math.min(target.maxHp, target.hp + ALLY_REPAIR_AMT);
         if (target.hp > before) villageRepairs += 1;
         ally.nextActionAt = now + ALLY_REPAIR_MS;
+        if (
+          activeEvent?.type === "repair" &&
+          activeEvent.buildingKey === target.key &&
+          target.hp > before
+        ) {
+          resolveRepairEvent(target);
+        }
       }
     }
   }
 
   invaders = invaders.filter((i) => i.hp > 0);
   allies = allies.filter((a) => now - a.born <= ALLY_LIFETIME_MS);
+
+  if (
+    activeEvent?.type === "warrior" &&
+    !invaders.some((i) => i.id === activeEvent.eliteId)
+  ) {
+    // Elite died somehow without ally callback
+    clearActiveEvent(null);
+  }
 
   if (buildings.length && buildings.every((b) => b.hp <= 0)) {
     endVillageLose();
@@ -878,11 +1260,12 @@ function randomInt(min, maxInclusive) {
 
 /** Spawn one enemy in a random free corner (任一：左上/右上/左下/右下). */
 function spawnEnemy() {
-  if (enemies.length >= MAX_ACTIVE_ENEMIES) return null;
+  const cfg = diffCfg();
+  if (enemies.length >= cfg.smashMax) return null;
   const free = freeCornerIndexes();
   if (free.length === 0) return null;
   const cornerIndex = free[Math.floor(Math.random() * free.length)];
-  const maxHp = BASE_HITS + Math.floor(score / 3);
+  const maxHp = cfg.smashHits + Math.floor(score / 3);
   const enemy = {
     cornerIndex,
     hp: maxHp,
@@ -895,15 +1278,15 @@ function spawnEnemy() {
 }
 
 /**
- * Keep 1–2 enemies. Rolls a random target count each refill;
- * never removes living enemies, only adds until target (or max free).
+ * Keep 1–N enemies based on difficulty.
  */
 function refillEnemies() {
-  const want = randomInt(MIN_ACTIVE_ENEMIES, MAX_ACTIVE_ENEMIES);
+  const cfg = diffCfg();
+  const want = randomInt(cfg.smashMin, cfg.smashMax);
   while (enemies.length < want) {
     if (!spawnEnemy()) break;
   }
-  if (enemies.length < MIN_ACTIVE_ENEMIES) spawnEnemy();
+  if (enemies.length < cfg.smashMin) spawnEnemy();
   updateHud();
 }
 
@@ -1028,6 +1411,7 @@ function applyHit(source = "punch", enemy = null) {
   const box = cornerNormRect(corner);
   target.hp -= 1;
   combo += 1;
+  maybeShowComboTitle(combo);
   const attackFrames = corner.attackCols || corner.sheetCols || 4;
   const attackMs = Math.max(HIT_POP_MS, attackFrames * ENEMY_FRAME_MS);
   target.hitImpactUntil = now + attackMs;
@@ -1058,6 +1442,7 @@ function applyHit(source = "punch", enemy = null) {
   if (target.hp <= 0) {
     score += 1;
     combo = 0;
+    lastTitleTier = 0;
     celebrateUntil = now + 900;
     enemies = enemies.filter((e) => e !== target);
     refillEnemies();
@@ -1317,6 +1702,32 @@ function drawTinySwordsBackground(cw, ch, buildingList = null) {
     if (b.hp != null && b.hp <= 0) ctx.restore();
     else if (b.hp != null && b.maxHp != null && b.hp > 0) {
       drawBuildingHpBar(x, y, drawW, b);
+      const isUrgent =
+        activeEvent?.type === "repair" && activeEvent.buildingKey === b.key;
+      if (isUrgent) {
+        const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 120);
+        ctx.save();
+        ctx.globalAlpha = 0.35 + pulse * 0.35;
+        ctx.strokeStyle = "#ff9f1c";
+        ctx.lineWidth = Math.max(3, drawW * 0.04);
+        ctx.strokeRect(x - 4, y - 4, drawW + 8, drawH + 8);
+        // smoke puffs
+        ctx.globalAlpha = 0.5 + pulse * 0.3;
+        ctx.fillStyle = "rgba(80,80,80,0.7)";
+        const sx = x + drawW * 0.55;
+        const sy = y + drawH * 0.15;
+        for (let i = 0; i < 3; i++) {
+          const oy = -i * 12 - (performance.now() / 30) % 20;
+          ctx.beginPath();
+          ctx.arc(sx + i * 6, sy + oy, 8 + i * 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#ff9f1c";
+        ctx.font = `bold ${Math.max(14, Math.floor(drawW * 0.22))}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText("快修！", x + drawW / 2, y - 14);
+        ctx.restore();
+      }
     }
   }
 }
@@ -1349,20 +1760,36 @@ function drawScene(mirroredLandmarks) {
   if (gameMode === "village") {
     for (const pad of rolePads) drawRolePad(pad, now, cw, ch);
     for (const inv of invaders) {
-      const size = Math.max(36, cw * 0.055);
+      const elite = Boolean(inv.elite);
+      const size = Math.max(36, cw * 0.055) * (elite ? 1.45 : 1);
+      if (elite) {
+        ctx.save();
+        ctx.strokeStyle = "#ff2d55";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(inv.x * cw, inv.y * ch, size * 0.55, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
       drawUnitSprite("invader-run", inv.x * cw, inv.y * ch, size, 6);
       // tiny hp
       const bw = size * 0.8;
       const bh = 6;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(inv.x * cw - bw / 2, inv.y * ch - size * 0.55, bw, bh);
-      ctx.fillStyle = "#ff5a5f";
+      ctx.fillStyle = elite ? "#ff9f1c" : "#ff5a5f";
       ctx.fillRect(
         inv.x * cw - bw / 2,
         inv.y * ch - size * 0.55,
         bw * Math.max(0, inv.hp / inv.maxHp),
         bh
       );
+      if (elite) {
+        ctx.fillStyle = "#ffe566";
+        ctx.font = `bold ${Math.max(12, Math.floor(cw * 0.022))}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText("精英", inv.x * cw, inv.y * ch - size * 0.7);
+      }
     }
     for (const ally of allies) {
       const size = Math.max(32, cw * 0.048);
@@ -1379,6 +1806,8 @@ function drawScene(mirroredLandmarks) {
 
   drawDamagePops(now, cw, ch);
   drawHitFx(now, cw, ch);
+  drawEventBanner(now, cw, ch);
+  drawTitleToast(now, cw, ch);
 
   if (showCameraBg) {
     if (!mirroredLandmarks) return;
@@ -2108,6 +2537,8 @@ function loop() {
 
   if (gameMode === "village" && !villageLost) {
     updateVillage(dt, now);
+  } else if (gameMode === "smash") {
+    tickHitComboTimeout(now);
   }
 
   if (video.currentTime === lastVideoTime) {
@@ -2204,6 +2635,7 @@ async function toggle() {
 
     score = 0;
     combo = 0;
+    resetComboTitleState();
     if (gameMode === "smash") {
       resetEnemies();
       setStatus("随机 1～2 只怪，砸向任一角落！");
@@ -2236,6 +2668,16 @@ cameraBtn.addEventListener("click", toggleCamera);
 bgBtn.addEventListener("click", toggleCameraBg);
 modeSmashBtn?.addEventListener("click", () => enterMode("smash"));
 modeVillageBtn?.addEventListener("click", () => enterMode("village"));
+modeSettingsBtn?.addEventListener("click", () => showSettings());
+settingsBackBtn?.addEventListener("click", () => {
+  hideSettings();
+  showMenu();
+});
+document.querySelectorAll(".diff-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setDifficulty(btn.getAttribute("data-diff") || "normal");
+  });
+});
 menuBtn?.addEventListener("click", () => showMenu());
 resultMenuBtn?.addEventListener("click", () => showMenu());
 playlistToggle.addEventListener("click", (e) => {
@@ -2291,6 +2733,7 @@ updateBgButton();
 syncPlaylistInput();
 syncPlayModeButton();
 preloadEnemyImages();
+syncDifficultyUI();
 showMenu();
 // Warm up YouTube embed so「开始运动」更容易一次点播。
 void ensureYtPlayer().catch((err) => console.warn(err));

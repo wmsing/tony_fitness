@@ -22,7 +22,26 @@
             <span class="mode-card-title">守村保卫</span>
             <span class="mode-card-desc">给战士 / 维修充能召唤友军，保护村庄建筑</span>
           </button>
+          <button id="mode-settings" type="button" class="mode-card mode-card-secondary">
+            <span class="mode-card-title">设置</span>
+            <span class="mode-card-desc">调节游戏难度</span>
+          </button>
         </div>
+      </div>
+    </section>
+
+    <section id="settings-panel" class="settings-panel" hidden aria-label="设置">
+      <div class="settings-inner">
+        <h2 class="settings-title">设置</h2>
+        <p class="settings-label" id="difficulty-label">难度</p>
+        <div class="difficulty-row" role="group" aria-labelledby="difficulty-label">
+          <button type="button" class="diff-btn" data-diff="easy">简单</button>
+          <button type="button" class="diff-btn" data-diff="normal">普通</button>
+          <button type="button" class="diff-btn" data-diff="hard">困难</button>
+          <button type="button" class="diff-btn" data-diff="insane">地狱</button>
+        </div>
+        <p id="difficulty-desc" class="settings-desc">敌兵密度与砸怪血量适中，适合日常锻炼。</p>
+        <button id="settings-back" type="button" class="settings-back">返回菜单</button>
       </div>
     </section>
 

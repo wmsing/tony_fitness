@@ -373,6 +373,108 @@ body {
   display: flex;
 }
 
+#app.settings-open .mode-menu {
+  display: none;
+}
+
+#app.settings-open .hud,
+#app.settings-open .yt-dock,
+#app.settings-open .playlist-menu,
+#app.settings-open .controls {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.mode-card-secondary {
+  background: rgba(12, 18, 32, 0.55);
+}
+
+.settings-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 21;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(8, 16, 28, 0.78), rgba(8, 16, 28, 0.9)),
+    url("assets/enemy/tiny-swords/bg-grass-tile.png") repeat;
+  background-size: auto, 64px 64px;
+  image-rendering: pixelated;
+}
+
+#app.settings-open .settings-panel {
+  display: flex;
+}
+
+.settings-inner {
+  width: min(420px, 100%);
+  padding: 22px 18px;
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(12, 18, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.settings-title {
+  margin: 0 0 16px;
+  font-size: 1.4rem;
+}
+
+.settings-label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.difficulty-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.diff-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 10px 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.diff-btn.on {
+  background: rgba(76, 201, 240, 0.9);
+  color: #081018;
+  border-color: transparent;
+}
+
+.settings-desc {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  min-height: 2.6em;
+}
+
+.settings-back {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 22px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: #081018;
+  background: var(--ok);
+}
+
 .mode-menu-inner {
   width: min(520px, 100%);
   text-align: center;
