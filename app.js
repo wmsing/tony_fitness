@@ -410,7 +410,7 @@ const DIFFICULTY_STORAGE_KEY = "tony_fitness_difficulty";
 const DIFFICULTY_PRESETS = {
   easy: {
     label: "简单",
-    desc: "敌兵较少较慢，砸怪血量更低，适合热身入门。",
+    desc: "敌兵较少较慢，适合热身入门。",
     maxInvaders: 8,
     spawnMs: 2400,
     speed: 0.04,
@@ -425,7 +425,7 @@ const DIFFICULTY_PRESETS = {
   },
   normal: {
     label: "普通",
-    desc: "敌兵密度与砸怪血量适中，适合日常锻炼。",
+    desc: "敌兵密度适中，适合日常锻炼。",
     maxInvaders: 14,
     spawnMs: 1500,
     speed: 0.055,
@@ -440,7 +440,7 @@ const DIFFICULTY_PRESETS = {
   },
   hard: {
     label: "困难",
-    desc: "敌兵更多更快，砸怪更耐打，需要更频繁挥拳。",
+    desc: "敌兵更多更快，需要更频繁挥剑充能。",
     maxInvaders: 18,
     spawnMs: 1100,
     speed: 0.065,
@@ -605,9 +605,6 @@ const hpText = document.getElementById("hp-text");
 const scoreLabel = document.getElementById("score-label");
 const comboLabel = document.getElementById("combo-label");
 const appEl = document.getElementById("app");
-const modeMenu = document.getElementById("mode-menu");
-const modeSmashBtn = document.getElementById("mode-smash");
-const modeVillageBtn = document.getElementById("mode-village");
 const modeSettingsBtn = document.getElementById("mode-settings");
 const settingsPanel = document.getElementById("settings-panel");
 const settingsBackBtn = document.getElementById("settings-back");
@@ -712,6 +709,21 @@ punchSfx.volume = 0.28;
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+/** Read a short Chinese hint aloud (Web Speech API). */
+function speakHint(text) {
+  try {
+    if (!window.speechSynthesis || !text) return;
+    const utter = new SpeechSynthesisUtterance(String(text));
+    utter.lang = "zh-CN";
+    utter.rate = 1.05;
+    utter.volume = 1;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  } catch {
+    /* ignore unsupported / blocked TTS */
+  }
 }
 
 function resetComboTitleState() {
@@ -887,16 +899,10 @@ function drawVillageChest(now, cw, ch) {
 }
 
 function showMenu() {
-  stopLoop();
-  gameMode = null;
-  villageLost = false;
-  if (resultOverlay) resultOverlay.hidden = true;
+  // Home is village — menu returns to a fresh village ready state.
   hideSettings();
-  appEl?.classList.add("menu-open");
-  appEl?.classList.remove("mode-village", "mode-smash");
-  setStatus("选择模式后开始运动");
-  resizeCanvas();
-  drawMenuPreview();
+  if (resultOverlay) resultOverlay.hidden = true;
+  enterMode("village");
 }
 
 function showSettings() {
@@ -906,12 +912,25 @@ function showSettings() {
   if (settingsPanel) settingsPanel.hidden = false;
   syncDifficultyUI();
   syncWeaponUI();
-  setStatus("调节难度与武器后返回菜单");
+  setStatus("调节难度与武器后返回守村");
 }
 
 function hideSettings() {
   appEl?.classList.remove("settings-open");
   if (settingsPanel) settingsPanel.hidden = true;
+}
+
+function returnFromSettings() {
+  hideSettings();
+  if (gameMode === "village" && !villageLost) {
+    appEl?.classList.add("mode-village");
+    setStatus("点「开始运动」继续守村");
+    resizeCanvas();
+    if (!isCameraOn()) drawCameraOffPlaceholder();
+    else drawScene(null);
+    return;
+  }
+  enterMode("village");
 }
 
 function setDifficulty(id) {
@@ -1155,10 +1174,6 @@ function clearActiveEvent(message) {
   if (message) setStatus(message);
 }
 
-function villageXpIntoLevel() {
-  return villageXp % VILLAGE_XP_PER_LEVEL;
-}
-
 function addVillageXp(amount, reason = "") {
   if (gameMode !== "village" || villageLost || amount <= 0) return;
   villageXp += amount;
@@ -1198,7 +1213,11 @@ function trySpawnVillageChest(now) {
     until: now + CHEST_LIFETIME_MS,
     hitImpactUntil: 0,
   };
-  setStatus(`等级 ${lastChestMilestone} 奖励：角落出现增益宝箱！快砸开`);
+  const corner = CORNERS[cornerIndex % CORNERS.length];
+  const where = corner?.label || "角落";
+  const line = `宝箱在${where}角`;
+  setStatus(`等级 ${lastChestMilestone} 奖励：${line}！快砸开`);
+  speakHint(line);
 }
 
 function pickChestReward() {
@@ -1598,36 +1617,27 @@ function drawBuildingHpBar(bx, by, bw, building) {
   ctx.fillRect(x, y, barW * ratio, barH);
 }
 
-/** Big level label above the main castle. */
+/** Level label near the top of the screen (village HUD is hidden). */
 function drawCastleLevelLabel(bx, by, bw, building) {
   if (gameMode !== "village" || building.key !== "bg-castle") return;
   if (building.hp != null && building.hp <= 0) return;
 
   const cx = bx + bw / 2;
-  const mainSize = Math.max(36, Math.floor(bw * 0.4));
-  const subSize = Math.max(12, Math.floor(mainSize * 0.34));
-  const xpNow = villageXpIntoLevel();
-  const nextChestAt = lastChestMilestone + CHEST_LEVEL_STEP;
-  const yMain = by - Math.max(22, canvas.height * 0.022);
+  const mainSize = Math.max(18, Math.floor(bw * 0.2));
+  // Flush to canvas top — no extra top padding.
+  const yMain = mainSize * 0.55;
 
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
-  ctx.lineWidth = Math.max(4, mainSize * 0.08);
+  ctx.lineWidth = Math.max(3, mainSize * 0.12);
   ctx.strokeStyle = "rgba(8, 16, 24, 0.85)";
   ctx.fillStyle = "#ffe566";
-  ctx.font = `900 ${mainSize}px system-ui, sans-serif`;
+  ctx.font = `800 ${mainSize}px system-ui, sans-serif`;
   const label = `等级 ${villageLevel}`;
   ctx.strokeText(label, cx, yMain);
   ctx.fillText(label, cx, yMain);
-
-  ctx.lineWidth = Math.max(2, subSize * 0.1);
-  ctx.fillStyle = "rgba(255,255,255,0.92)";
-  ctx.font = `bold ${subSize}px system-ui, sans-serif`;
-  const sub = `${xpNow}/${VILLAGE_XP_PER_LEVEL} · 宝箱 ${nextChestAt}级`;
-  ctx.strokeText(sub, cx, yMain + mainSize * 0.62);
-  ctx.fillText(sub, cx, yMain + mainSize * 0.62);
   ctx.restore();
 }
 
@@ -1648,45 +1658,47 @@ function drawRolePad(pad, now, cw, ch) {
   }
   const color = pad.type === "warrior" ? "#4cc9f0" : "#ffe566";
   ctx.save();
-  ctx.globalAlpha = hitting ? 0.5 : 0.3;
+  ctx.globalAlpha = hitting ? 0.5 : 0.28;
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.roundRect(rx, ry, rw, rh, Math.min(24, rw * 0.08));
   ctx.fill();
   ctx.globalAlpha = 1;
   ctx.strokeStyle = "#fff";
-  ctx.lineWidth = Math.max(3, cw * 0.005);
+  ctx.lineWidth = Math.max(2, cw * 0.004);
   ctx.stroke();
 
-  const label = pad.type === "warrior" ? "战士充能" : "维修充能";
+  // One compact row: role name + summon count
+  const roleName = pad.type === "warrior" ? "战士" : "维修";
+  const line = `${roleName} · 打满出 ${pad.maxHp}`;
+  const textSize = Math.max(10, Math.floor(cw * 0.016));
   ctx.fillStyle = "#081018";
-  ctx.font = `bold ${Math.max(14, Math.floor(cw * 0.028))}px sans-serif`;
+  ctx.font = `bold ${textSize}px sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText(label, rx + rw / 2, ry + rh * 0.22);
-  ctx.fillStyle = "#fff";
-  ctx.font = `bold ${Math.max(16, Math.floor(cw * 0.032))}px sans-serif`;
-  ctx.fillText(`打满出 ${pad.maxHp}`, rx + rw / 2, ry + rh * 0.38);
+  ctx.textBaseline = "middle";
+  ctx.fillText(line, rx + rw / 2, ry + rh * 0.08);
 
-  // charge bar (remaining hits)
-  const barW = rw * 0.7;
-  const barH = Math.max(12, rh * 0.08);
+  // Slim charge bar
+  const barW = rw * 0.5;
+  const barH = Math.max(5, rh * 0.028);
   const bx = rx + (rw - barW) / 2;
-  const by = ry + rh * 0.48;
+  const by = ry + rh * 0.14;
   const ratio = Math.max(0, pad.hp / pad.maxHp);
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(bx - 2, by - 2, barW + 4, barH + 4);
+  ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
   ctx.fillStyle = "rgba(255,255,255,0.2)";
   ctx.fillRect(bx, by, barW, barH);
   ctx.fillStyle = color;
   ctx.fillRect(bx, by, barW * ratio, barH);
   ctx.fillStyle = "#fff";
-  ctx.font = `bold ${Math.max(12, Math.floor(barH * 0.9))}px sans-serif`;
-  ctx.fillText(`${pad.hp}/${pad.maxHp}`, rx + rw / 2, by + barH / 2 + 1);
+  ctx.font = `bold ${Math.max(8, Math.floor(barH * 0.95))}px sans-serif`;
+  ctx.fillText(`${pad.hp}/${pad.maxHp}`, rx + rw / 2, by + barH / 2);
 
+  // Larger role sprite
   const artKey = pad.type === "warrior" ? "ally-warrior" : "ally-repair";
-  const artSize = Math.min(rw, rh) * 0.55;
+  const artSize = Math.min(rw, rh) * 0.9;
   const cols = pad.type === "warrior" ? 8 : 6;
-  drawUnitSprite(artKey, rx + rw / 2, ry + rh * 0.78, artSize, cols);
+  drawUnitSprite(artKey, rx + rw / 2, ry + rh * 0.58, artSize, cols);
   ctx.restore();
 }
 
@@ -1839,7 +1851,7 @@ function updateHud() {
     promptEl.textContent =
       labels.length > 0 ? `击杀！继续砸 ${labels.join(" + ")}` : "击杀！";
   } else if (labels.length === 0) {
-    promptEl.textContent = gameMode ? "准备开始" : "选择模式";
+    promptEl.textContent = gameMode ? "准备开始" : "守村保卫";
   } else {
     promptEl.textContent = `砸 ${labels.join(" + ")} · 挥拳 / 甩头`;
   }
@@ -2774,7 +2786,7 @@ async function toggleCamera() {
       stopCamera();
     } else {
       await startCamera();
-      setStatus("摄像头已打开。点「开始运动」即可挥拳砸怪。");
+      setStatus("摄像头已打开。点「开始运动」即可守村。");
     }
   } catch (err) {
     console.error(err);
@@ -3237,7 +3249,7 @@ function loop() {
 
 async function toggle() {
   if (!gameMode) {
-    setStatus("请先在菜单选择「砸怪健身」或「守村保卫」");
+    setStatus("请先点「开始运动」");
     return;
   }
   if (villageLost && gameMode === "village") {
@@ -3307,20 +3319,18 @@ async function toggle() {
 startBtn.addEventListener("click", toggle);
 cameraBtn.addEventListener("click", toggleCamera);
 bgBtn.addEventListener("click", toggleCameraBg);
-modeSmashBtn?.addEventListener("click", () => enterMode("smash"));
-modeVillageBtn?.addEventListener("click", () => enterMode("village"));
 modeSettingsBtn?.addEventListener("click", () => showSettings());
-settingsBackBtn?.addEventListener("click", () => {
-  hideSettings();
-  showMenu();
-});
+settingsBackBtn?.addEventListener("click", () => returnFromSettings());
 document.querySelectorAll(".diff-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     setDifficulty(btn.getAttribute("data-diff") || "normal");
   });
 });
-menuBtn?.addEventListener("click", () => showMenu());
-resultMenuBtn?.addEventListener("click", () => showMenu());
+menuBtn?.addEventListener("click", () => showSettings());
+resultMenuBtn?.addEventListener("click", () => {
+  if (resultOverlay) resultOverlay.hidden = true;
+  enterMode("village");
+});
 playlistToggle.addEventListener("click", (e) => {
   e.stopPropagation();
   togglePlaylistPop();
@@ -3376,6 +3386,6 @@ syncPlayModeButton();
 preloadEnemyImages();
 buildWeaponGrids();
 syncDifficultyUI();
-showMenu();
+enterMode("village");
 // Warm up YouTube embed so「开始运动」更容易一次点播。
 void ensureYtPlayer().catch((err) => console.warn(err));

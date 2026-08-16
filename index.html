@@ -3,33 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Tony Fitness — 健身拳击</title>
+  <title>Tony Fitness — 守村保卫</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="app" class="menu-open">
-    <section id="mode-menu" class="mode-menu" aria-label="选择模式">
-      <div class="mode-menu-inner">
-        <p class="mode-brand">Tony Fitness</p>
-        <h1 class="mode-title">健身拳击</h1>
-        <p class="mode-sub">挥拳动起来，选一个玩法开练</p>
-        <div class="mode-actions">
-          <button id="mode-smash" type="button" class="mode-card">
-            <span class="mode-card-title">砸怪健身</span>
-            <span class="mode-card-desc">朝角落挥拳 / 甩头砸怪，活动手臂与颈部</span>
-          </button>
-          <button id="mode-village" type="button" class="mode-card">
-            <span class="mode-card-title">守村保卫</span>
-            <span class="mode-card-desc">给战士 / 维修充能召唤友军，保护村庄建筑</span>
-          </button>
-          <button id="mode-settings" type="button" class="mode-card mode-card-secondary">
-            <span class="mode-card-title">设置</span>
-            <span class="mode-card-desc">难度与左右武器</span>
-          </button>
-        </div>
-      </div>
-    </section>
-
+  <div id="app">
     <section id="settings-panel" class="settings-panel" hidden aria-label="设置">
       <div class="settings-inner">
         <h2 class="settings-title">设置</h2>
@@ -40,14 +18,14 @@
           <button type="button" class="diff-btn" data-diff="hard">困难</button>
           <button type="button" class="diff-btn" data-diff="insane">地狱</button>
         </div>
-        <p id="difficulty-desc" class="settings-desc">敌兵密度与砸怪血量适中，适合日常锻炼。</p>
+        <p id="difficulty-desc" class="settings-desc">敌兵密度适中，适合日常锻炼。</p>
 
         <p class="settings-label" id="weapon-left-label">左手武器</p>
         <div id="weapon-left-grid" class="weapon-grid" role="group" aria-labelledby="weapon-left-label"></div>
         <p class="settings-label" id="weapon-right-label">右手武器</p>
         <div id="weapon-right-grid" class="weapon-grid" role="group" aria-labelledby="weapon-right-label"></div>
 
-        <button id="settings-back" type="button" class="settings-back">返回菜单</button>
+        <button id="settings-back" type="button" class="settings-back">返回守村</button>
       </div>
     </section>
 
@@ -113,7 +91,7 @@
       <div class="result-card">
         <h2 id="result-title">村庄沦陷</h2>
         <p id="result-body"></p>
-        <button id="result-menu-btn" type="button">返回菜单</button>
+        <button id="result-menu-btn" type="button">再战守村</button>
       </div>
     </div>
 
